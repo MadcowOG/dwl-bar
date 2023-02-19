@@ -1,2 +1,2 @@
 # dwl-bar
-dwl-like bar for dwl
+dwm-like bar for dwl
