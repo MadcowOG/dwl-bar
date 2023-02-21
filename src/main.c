@@ -56,7 +56,6 @@ typedef struct {
   Monitor* focused_monitor;
 
   int x, y;
-
   uint32_t* buttons;
   uint size;
 } Pointer;
@@ -121,7 +120,7 @@ static void motion(void* data, wl_pointer* pointer, uint32_t time, wl_fixed_t x,
 static void button(void* data, wl_pointer* pointer, uint32_t serial, uint32_t time, uint32_t button, uint32_t state);
 static void frame(void* data, wl_pointer* pointer);
 
-/* We don't do anything in these functions */
+/* Also pointer listener members, but we don't do anything in these functions */
 static void axis(void *data, struct wl_pointer *wl_pointer, uint32_t time, uint32_t axis, wl_fixed_t value) {}
 static void axis_source(void *data, struct wl_pointer *wl_pointer, uint32_t axis_source) {}
 static void axis_stop(void *data, struct wl_pointer *wl_pointer, uint32_t time, uint32_t axis) {}
@@ -230,17 +229,17 @@ void motion(void* data, wl_pointer* pointer, uint32_t time, wl_fixed_t x, wl_fix
 void button(void *data, wl_pointer *pointer, uint32_t serial, uint32_t time,
             uint32_t button, uint32_t state) {
   Seat seat = *(Seat*)data;
+  uint32_t* new_buttons = NULL;
   int i, prev = -1; /* The index of this button */
 
   for (i = 0; i < seat.pointer->size; i++) {
-    _logf("'%d' ", seat.pointer->buttons[i]);
     if (seat.pointer->buttons[i] == button)
       prev = i;
   }
 
   /* If this button was newly pressed. */
   if (state == WL_POINTER_BUTTON_STATE_PRESSED && prev == -1) {
-    uint32_t* new_buttons = ecalloc(seat.pointer->size+1, sizeof(uint32_t));
+    new_buttons = ecalloc(seat.pointer->size+1, sizeof(uint32_t));
     for (i = 0; i < seat.pointer->size+1; i++) {
       if (i == seat.pointer->size) {
         new_buttons[i] = button;
@@ -250,15 +249,12 @@ void button(void *data, wl_pointer *pointer, uint32_t serial, uint32_t time,
       new_buttons[i] = seat.pointer->buttons[i];
     }
 
-    free(seat.pointer->buttons);
-    seat.pointer->buttons = new_buttons;
     seat.pointer->size++;
-    return;
   }
 
   /* If this button was released and we have it. */
   if(state == WL_KEYBOARD_KEY_STATE_RELEASED && prev != -1) {
-    uint32_t* new_buttons = ecalloc(seat.pointer->size-1, sizeof(uint32_t));
+    new_buttons = ecalloc(seat.pointer->size-1, sizeof(uint32_t));
     for (i = 0; i < seat.pointer->size; i++) {
       if (i == prev)
         continue;
@@ -270,12 +266,12 @@ void button(void *data, wl_pointer *pointer, uint32_t serial, uint32_t time,
         new_buttons[i-1] = seat.pointer->buttons[i];
     }
 
-    free(seat.pointer->buttons);
-    seat.pointer->buttons = new_buttons;
     seat.pointer->size--;
-
-    return;
   }
+
+  free(seat.pointer->buttons);
+  seat.pointer->buttons = new_buttons;
+  return;
 }
 
 static void frame(void* data, wl_pointer* pointer) {
@@ -542,8 +538,8 @@ Monitor* monitor_from_surface(wl_surface* surface) {
 
 /*
  * Parse and extract a substring based on a delimiter
- * start_end is a pointer to a ulong that we will use to base our starting location.
- * Then fill in after as the ending point. To be used later on.
+ * start_end is a ulong that we will use to base our starting location.
+ * Then replace as the end point to be used later on.
  */
 char* to_delimiter(char* string, ulong *start_end, char delimiter) {
   char* output;

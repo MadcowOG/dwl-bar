@@ -19,35 +19,16 @@
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
 #include "xdg-shell-client-protocol.h"
 
-typedef struct Font Font;
-typedef struct BarComponent BarComponent;
-
-static void layerSurface(void* data, zwlr_layer_surface_v1*, uint32_t serial, uint32_t width, uint32_t height);
-static void frame(void* data, wl_callback* callback, uint32_t callback_data);
-static void bar_render(Bar* bar);
-static void bar_tags_render(Bar* bar, cairo_t* painter, int* x);
-static void bar_layout_render(Bar* bar, cairo_t* painter, int* x);
-static void bar_title_render(Bar* bar, cairo_t* painter, int* x);
-static void bar_status_render(Bar* bar, cairo_t* painter, int* x);
-static void bar_set_colorscheme(Bar* bar, const int** scheme);
-static void set_color(cairo_t* painter, const int rgba[4]);
-static void bar_color_background(Bar* bar, cairo_t* painter);
-static void bar_color_foreground(Bar* bar, cairo_t* painter);
-static Font getFont(void);
-static void bar_component_render(Bar* bar, BarComponent* component, cairo_t* painter, uint width, int* x);
-static int bar_component_width(BarComponent* component);
-static int bar_component_height(BarComponent* component);
-
-struct Font {
+typedef struct Font {
     PangoFontDescription* description;
 
     uint height; /* This is also the same as lrpad from dwm. */
-};
+} Font;
 
-struct BarComponent {
+typedef struct BarComponent {
     PangoLayout* layout;
     int x; /* Right bound of box */
-};
+} BarComponent;
 
 typedef struct {
     uint occupied;
@@ -61,7 +42,6 @@ struct Bar {
     Tag tags[9];
 
     PangoContext* context;
-    Font font;
 
     /* Colors */
     int background[4], foreground[4];
@@ -76,16 +56,31 @@ struct Bar {
     Shm* shm;
 };
 
+static void layerSurface(void* data, zwlr_layer_surface_v1*, uint32_t serial, uint32_t width, uint32_t height);
+static void frame(void* data, wl_callback* callback, uint32_t callback_data);
+static void bar_render(Bar* bar);
+static void bar_tags_render(Bar* bar, cairo_t* painter, int* x);
+static void bar_layout_render(Bar* bar, cairo_t* painter, int* x);
+static void bar_title_render(Bar* bar, cairo_t* painter, int* x);
+static void bar_status_render(Bar* bar, cairo_t* painter, int* x);
+static void bar_set_colorscheme(Bar* bar, const int** scheme);
+static void set_color(cairo_t* painter, const int rgba[4]);
+static void bar_color_background(Bar* bar, cairo_t* painter);
+static void bar_color_foreground(Bar* bar, cairo_t* painter);
+static Font getFont(void);
+static BarComponent bar_component_create(PangoContext* context, PangoFontDescription* description);
+static void bar_component_render(Bar* bar, BarComponent* component, cairo_t* painter, uint width, int* x);
+static int bar_component_width(BarComponent* component);
+static int bar_component_height(BarComponent* component);
+
+static Font bar_font = {NULL, 0};
+
 // So that the compositor can tell us when it's a good time to render again.
-const wl_callback_listener frameListener = {
-.done = frame
-};
+const wl_callback_listener frameListener = {.done = frame};
 
 // So that wlroots can tell us we need to resize.
 // We really only need to worry about this when the bar is visible (sometimes it isn't).
-const zwlr_layer_surface_v1_listener layerSurfaceListener = {
-.configure = layerSurface
-};
+const zwlr_layer_surface_v1_listener layerSurfaceListener = {.configure = layerSurface};
 
 void layerSurface(void* data, zwlr_layer_surface_v1* _, uint32_t serial, uint32_t width, uint32_t height) {
     Bar* bar = data;
@@ -138,6 +133,13 @@ Font getFont(void) {
     return in;
 }
 
+BarComponent bar_component_create(PangoContext* context, PangoFontDescription* description) {
+    PangoLayout* layout = pango_layout_new(context);
+    pango_layout_set_font_description(layout, description);
+
+    return (BarComponent){ layout, 0 };
+}
+
 int bar_component_width(BarComponent* component) {
     int w;
     pango_layout_get_size(component->layout, &w, NULL);
@@ -178,34 +180,34 @@ void bar_component_render(Bar* bar, BarComponent* component, cairo_t* painter, u
     cairo_fill(painter);
 
     bar_color_foreground(bar, painter);
-    cairo_move_to(painter, *x+(bar->font.height/2.0), 1);
+    cairo_move_to(painter, *x+(bar_font.height/2.0), 1);
     pango_cairo_show_layout(painter, component->layout);
 }
 
 void bar_tags_render(Bar* bar, cairo_t* painter, int* x) {
-    for ( int i = 0; i < LENGTH(tags); i++ ) {
-        Tag tag = bar->tags[i];
-        uint tagWidth = bar_component_width(&tag.component) + bar->font.height;
+    for ( int i = 0; i < LENGTH(bar->tags); i++ ){
+        Tag* tag = &bar->tags[i];
+        uint tagWidth = bar_component_width(&tag->component) + bar_font.height;
 
         /* Creating the tag */
-        if (tag.state & TAG_ACTIVE) {
+        if (tag->state & TAG_ACTIVE) {
             bar_set_colorscheme(bar, schemes[Active_Scheme]);
-        } else if (tag.state & TAG_URGENT) {
+        } else if (tag->state & TAG_URGENT) {
             bar_set_colorscheme(bar, schemes[Urgent_Scheme]);
         } else {
             bar_set_colorscheme(bar, schemes[InActive_Scheme]);
         }
 
-        bar_component_render(bar, &tag.component, painter, tagWidth, x);
+        bar_component_render(bar, &tag->component, painter, tagWidth, x);
 
-        if (!tag.occupied)
+        if (!tag->occupied)
             goto done;
 
         /*  Creating the occupied tag box */
-        int boxHeight = bar->font.height / 9;
-        int boxWidth = bar->font.height / 6 + 1;
+        int boxHeight = bar_font.height / 9;
+        int boxWidth = bar_font.height / 6 + 1;
 
-        if (tag.focusedClient) {
+        if (tag->focusedClient) {
           cairo_rectangle(painter, *x + boxHeight, boxHeight, boxWidth, boxWidth);
           cairo_fill(painter);
         } else {
@@ -223,7 +225,7 @@ void bar_layout_render(Bar* bar, cairo_t* painter, int* x) {
     if (!bar)
         return;
 
-    uint layoutWidth = bar_component_width(&bar->layout) + bar->font.height;
+    uint layoutWidth = bar_component_width(&bar->layout) + bar_font.height;
 
     bar_set_colorscheme(bar, schemes[InActive_Scheme]);
     bar_component_render(bar, &bar->layout, painter, layoutWidth, x);
@@ -236,7 +238,7 @@ void bar_title_render(Bar* bar, cairo_t* painter, int* x) {
         return;
 
     // HUH For some reason ww - x - (status width) works, but ww - x - status width doesn't?
-    uint titleWidth = bar->shm->width - *x - (bar_component_width(&bar->status) + bar->font.height);
+    uint titleWidth = bar->shm->width - *x - (bar_component_width(&bar->status) + bar_font.height);
 
     bar->active ? bar_set_colorscheme(bar, schemes[Active_Scheme]) : bar_set_colorscheme(bar, schemes[InActive_Scheme]);
 
@@ -245,8 +247,8 @@ void bar_title_render(Bar* bar, cairo_t* painter, int* x) {
     if (!bar->floating)
         goto done;
 
-    int boxHeight = bar->font.height / 9;
-    int boxWidth = bar->font.height / 6 + 1;
+    int boxHeight = bar_font.height / 9;
+    int boxWidth = bar_font.height / 6 + 1;
 
     set_color(painter, grey3);
     cairo_rectangle(painter, *x + boxHeight + 0.5, boxHeight + 0.5, boxWidth, boxWidth);
@@ -261,7 +263,7 @@ void bar_status_render(Bar* bar, cairo_t* painter, int* x) {
     if (!bar)
         return;
 
-    uint statusWidth = bar_component_width(&bar->status) + bar->font.height;
+    uint statusWidth = bar_component_width(&bar->status) + bar_font.height;
 
     bar_set_colorscheme(bar, schemes[InActive_Scheme]);
     if (!bar->active && status_on_active)
@@ -310,30 +312,22 @@ Bar* bar_create(void) {
     if (!bar->context)
         die("pango context");
 
-    bar->font          = getFont();
-    bar->layout.layout = pango_layout_new(bar->context);
-    bar->title.layout  = pango_layout_new(bar->context);
-    bar->status.layout = pango_layout_new(bar->context);
+    if (!bar_font.description)
+        bar_font = getFont();
 
-    bar->layout.x = 0;
-    bar->title.x = 0;
-    bar->status.x = 0;
+    bar->layout = bar_component_create(bar->context, bar_font.description);
+    bar->title  = bar_component_create(bar->context, bar_font.description);
+    bar->status = bar_component_create(bar->context, bar_font.description);
 
-    pango_layout_set_font_description(bar->layout.layout, bar->font.description);
-    pango_layout_set_font_description(bar->title.layout, bar->font.description);
-    pango_layout_set_font_description(bar->status.layout, bar->font.description);
-
+    /* Default status */
     char* status = ecalloc(8, sizeof(*status));
     snprintf(status, 8, "dwl %.1f", VERSION);
+    pango_layout_set_text(bar->status.layout, status, strlen(status));
 
-    pango_layout_set_text(bar->layout.layout, "[]=", -1);
-    pango_layout_set_text(bar->status.layout, status, -1);
-
-    for ( int i = 0; i < LENGTH(tags); i++ ) { // Initalize the tags
-        PangoLayout* layout = pango_layout_new(bar->context);
-        pango_layout_set_text(layout, tags[i], strlen(tags[i]));
-        pango_layout_set_font_description(layout, bar->font.description);
-        Tag tag = { 0, 0, 0, layout };
+    for (int i = 0; i < LENGTH(tags); i++) {
+        BarComponent component = bar_component_create(bar->context, bar_font.description);
+        pango_layout_set_text(component.layout, tags[i], strlen(tags[i]));
+        Tag tag = { 0, 0, 0, component };
         bar->tags[i] = tag;
     }
 
@@ -402,7 +396,7 @@ void bar_show(Bar* bar, wl_output* output) {
     zwlr_layer_surface_v1_set_anchor(bar->layer_surface,
                                      anchor | ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT | ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT);
 
-    int height = bar->font.height + 2;
+    int height = bar_font.height + 2;
     zwlr_layer_surface_v1_set_size(bar->layer_surface, 0, height);
     zwlr_layer_surface_v1_set_exclusive_zone(bar->layer_surface, height);
     wl_surface_commit(bar->surface);
@@ -449,14 +443,15 @@ wl_surface* bar_get_surface(Bar *bar) {
 }
 
 void bar_click(Bar* bar, struct Monitor* monitor, int x, int y, uint32_t button) {
-    Arg* arg = NULL;
+    Arg *argp = NULL, arg;
     Clicked location = Click_None;
 
     if (x < bar->tags[LENGTH(bar->tags)-1].component.x) {
         location = Click_Tag;
         for (int i = 0; i < LENGTH(bar->tags); i++) {
             if (x < bar->tags[i].component.x) {
-                arg->ui = 1<<i;
+                arg.ui = 1<<i;
+                argp = &arg;
                 break;
             }
         }
@@ -473,7 +468,7 @@ void bar_click(Bar* bar, struct Monitor* monitor, int x, int y, uint32_t button)
 
     for (int i = 0; i < LENGTH(buttons); i++) {
         if (buttons[i].location == location && buttons[i].button == button) {
-            buttons[i].func(monitor, arg ? arg : &buttons[i].arg);
+            buttons[i].func(monitor, argp ? argp : &buttons[i].arg);
             return;
         }
     }

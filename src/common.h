@@ -8,8 +8,8 @@
 #include <linux/input-event-codes.h>
 #include <wayland-cursor.h>
 
-#define LENGTH(X) (sizeof X / sizeof X[0] )
 #define VERSION 1.0
+#define LENGTH(X) (sizeof X / sizeof X[0] )
 
 // Commonly used typedefs which makes using these structs easier.
 typedef struct wl_registry wl_registry;
