@@ -69,6 +69,6 @@ void* ecalloc(size_t amnt, size_t size);
  * User function definitions.
  * Usually used for when clicking buttons with a pointer.
  */
-extern void spawn(struct Monitor* monitor, const Arg* arg);
+void spawn(struct Monitor* monitor, const Arg* arg);
 
 #endif // COMMON_H_
