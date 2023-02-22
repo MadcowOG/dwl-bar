@@ -275,13 +275,11 @@ void button(void *data, wl_pointer *pointer, uint32_t serial, uint32_t time,
 static void frame(void* data, wl_pointer* pointer) {
   Seat seat = *(Seat*)data;
   Monitor* monitor = seat.pointer->focused_monitor;
-  if (!monitor) {
+  if (!monitor)
     return;
-  }
 
-  for (int i = 0; i < seat.pointer->size; i++) {
+  for (int i = 0; i < seat.pointer->size; i++)
     bar_click(monitor->bar, monitor, seat.pointer->x, seat.pointer->y, seat.pointer->buttons[i]);
-  }
 
   free(seat.pointer->buttons);
   seat.pointer->buttons = NULL;
@@ -303,9 +301,9 @@ void capabilites(void* data, wl_seat* wl_seat, uint32_t capabilities) {
   if (seat->pointer && !has_pointer) {
     wl_pointer_release(seat->pointer->pointer);
     seat->pointer->focused_monitor = NULL;
-    if (seat->pointer->buttons) {
+    if (seat->pointer->buttons)
       free(seat->pointer->buttons);
-    }
+
     free(seat->pointer);
   }
 }
@@ -865,9 +863,8 @@ void die(const char *fmt, ...) {
 void* ecalloc(size_t amnt, size_t size) {
   void *p;
 
-  if (!(p = calloc(amnt, size))) {
+  if (!(p = calloc(amnt, size)))
     die("calloc did not allocate");
-  }
 
   return p;
 }

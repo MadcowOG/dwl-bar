@@ -87,9 +87,8 @@ void layerSurface(void* data, zwlr_layer_surface_v1* _, uint32_t serial, uint32_
     zwlr_layer_surface_v1_ack_configure(bar->layer_surface, serial);
 
     if (bar->shm) {
-        if (bar->shm->width == width && bar->shm->height) {
+        if (bar->shm->width == width && bar->shm->height)
           return;
-        }
         shm_destroy(bar->shm);
     }
 
@@ -384,9 +383,8 @@ void bar_invalidate(Bar* bar) {
 }
 
 void bar_show(Bar* bar, wl_output* output) {
-    if (!bar || !output || bar_is_visible(bar)) {
+    if (!bar || !output || bar_is_visible(bar))
       return;
-    }
 
     bar->surface = wl_compositor_create_surface(compositor);
     bar->layer_surface = zwlr_layer_shell_v1_get_layer_surface(shell, bar->surface, output, ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM, "doom.dwl-bar");
