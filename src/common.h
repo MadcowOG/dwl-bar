@@ -43,7 +43,6 @@ extern wl_display* display;
 extern wl_compositor* compositor;
 extern wl_shm* shm;
 extern zwlr_layer_shell_v1* shell;
-extern FILE* file;
 
 struct Monitor;
 
@@ -66,18 +65,10 @@ typedef struct {
 void die(const char* fmt, ...);
 void* ecalloc(size_t amnt, size_t size);
 
-/* Logging functions */
-extern void logln(const char* str);
-extern void _logf(const char* fmt, ...);
-
 /*
  * User function definitions.
  * Usually used for when clicking buttons with a pointer.
  */
-void spawn(struct Monitor* monitor, const Arg* arg);
-void layout(struct Monitor* monitor, const Arg* arg);
-void view(struct Monitor* monitor, const Arg* arg);
-void toggle_view(struct Monitor* monitor, const Arg* arg);
-void tag(struct Monitor* monitor, const Arg* arg);
+extern void spawn(struct Monitor* monitor, const Arg* arg);
 
 #endif // COMMON_H_

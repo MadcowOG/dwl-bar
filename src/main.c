@@ -155,8 +155,6 @@ static char* fifo_path;
 static struct sigaction sighandle;
 static struct sigaction child_handle;
 
-FILE* file;
-
 /*
  * So that the global handler knows that we can initialize an output.
  * Rather than just store it for when we have all of our globals.
@@ -701,9 +699,6 @@ void on_status(void) {
       goto done;
     }
 
-    fprintf(file, "'%s'", status);
-    fflush(file);
-
     Monitor *current_monitor;
     wl_list_for_each(current_monitor, &monitors, link) {
         bar_set_status(current_monitor->bar, status);
@@ -719,10 +714,6 @@ void on_status(void) {
 }
 
 void setup(void) {
-  file = fopen("log.txt", "w");
-  if (!file)
-    die("file");
-
   if (pipe(self_pipe) < 0)
     die("pipe");
 
@@ -825,8 +816,6 @@ void cleanup(void) {
     unlink(fifo_path);
     remove(fifo_path);
   }
-  if (file)
-    fclose(file);
   if (display)
     wl_display_disconnect(display);
 }
@@ -881,17 +870,4 @@ void* ecalloc(size_t amnt, size_t size) {
   }
 
   return p;
-}
-
-void _logf(const char *fmt, ...) {
-  va_list ap;
-  va_start(ap, fmt);
-  vfprintf(file, fmt, ap);
-  fflush(file);
-  va_end(ap);
-}
-
-void logln(const char* str) {
-    fprintf(file, "%s\n", str);
-    fflush(file);
 }
