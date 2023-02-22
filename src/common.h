@@ -66,8 +66,8 @@ typedef struct {
 void die(const char* fmt, ...);
 void* ecalloc(size_t amnt, size_t size);
 
+/* Logging functions */
 extern void logln(const char* str);
-
 extern void _logf(const char* fmt, ...);
 
 /*
