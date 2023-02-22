@@ -1,6 +1,5 @@
 # dwl-bar
 dwm-like bar for dwl
-
 I believe dwl-bar provides a more dwm-like experience out of the box than other bars like somebar.
 
 Still in development. But should compile.
