@@ -1,6 +1,6 @@
 #ifndef COMMON_H_
 #define COMMON_H_
-#include "xdg-output-unstable-v1-client-protocol.h"
+#include "xdg-output-unstable-v1-protocol.h"
 #include <stddef.h>
 #include <sys/types.h>
 #include <stdio.h>

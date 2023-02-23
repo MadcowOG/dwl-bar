@@ -1,6 +1,6 @@
 #ifndef BAR_H_
 #define BAR_H_
-#include "wlr-layer-shell-unstable-v1-client-protocol.h"
+#include "wlr-layer-shell-unstable-v1-protocol.h"
 #include <stdint.h>
 #include <sys/types.h>
 #include <wayland-client-protocol.h>

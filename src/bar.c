@@ -5,19 +5,13 @@
 #include <wayland-client-protocol.h>
 
 #include <pango-1.0/pango/pangocairo.h>
-#include "cairo-deprecated.h"
-#include "cairo.h"
-#include "pango/pango-context.h"
-#include "pango/pango-font.h"
-#include "pango/pango-layout.h"
-#include "pango/pango-types.h"
 
 #include "config.h"
 #include "bar.h"
 #include "common.h"
 #include "shm.h"
-#include "wlr-layer-shell-unstable-v1-client-protocol.h"
-#include "xdg-shell-client-protocol.h"
+#include "wlr-layer-shell-unstable-v1-protocol.h"
+#include "xdg-shell-protocol.h"
 
 typedef struct Font {
     PangoFontDescription* description;

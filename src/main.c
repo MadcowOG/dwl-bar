@@ -1,12 +1,11 @@
-#include <asm-generic/errno-base.h>
-#include <stdarg.h>
-#include <stddef.h>
 #include <wayland-client-core.h>
 #include <wayland-client-protocol.h>
 #include <wayland-client.h>
 #include <wayland-cursor.h>
 #include <wayland-util.h>
 
+#include <stdarg.h>
+#include <stddef.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
@@ -21,13 +20,12 @@
 #include <sys/stat.h>
 
 #include "bar.h"
-#include "cairo.h"
 #include "common.h"
 #include "config.h"
 #include "shm.h"
-#include "wlr-layer-shell-unstable-v1-client-protocol.h"
-#include "xdg-output-unstable-v1-client-protocol.h"
-#include "xdg-shell-client-protocol.h"
+#include "wlr-layer-shell-unstable-v1-protocol.h"
+#include "xdg-output-unstable-v1-protocol.h"
+#include "xdg-shell-protocol.h"
 
 /*
  * When checking to see if two strings are the same with strcmp,

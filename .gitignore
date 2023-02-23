@@ -3,3 +3,7 @@ bar
 run
 compile_flags.txt
 log.txt
+config.h
+src/xdg-shell-protocol.h
+src/xdg-output-unstable-v1-protocol.h
+src/wlr-layer-shell-unstable-v1-protocol.h

@@ -4,7 +4,7 @@
 #include <linux/input-event-codes.h>
 
 static const int bar_top = 1; /* Boolean value, non-zero is true. If not top then bottom */
-static const int status_on_active = 0; /* Display the status on active monitor only. If not then on all. */
+static const int status_on_active = 1; /* Display the status on active monitor only. If not then on all. */
 static const char* font = "Monospace 10";
 static const char* terminal[] = { "alacritty", NULL };
 
