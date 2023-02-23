@@ -28,11 +28,7 @@ srcdir := src
 all: dwl-bar
 dwl-bar: $(srcdir)/xdg-shell-protocol.o $(srcdir)/xdg-output-unstable-v1-protocol.o $(srcdir)/wlr-layer-shell-unstable-v1-protocol.o $(srcdir)/main.c $(srcdir)/bar.c $(srcdir)/shm.c $(srcdir)/config.h
 	$(CC) $^ $(BARLIBS) $(BARCFLAGS) -o $@
-$(srcdir)/xdg-shell-protocol.o: $(srcdir)/xdg-shell-protocol.c $(srcdir)/xdg-shell-protocol.h
-	$(CC) -c $< $(BARLIBS) $(BARCFLAGS) -o $@
-$(srcdir)/xdg-output-unstable-v1-protocol.o: $(srcdir)/xdg-output-unstable-v1-protocol.c $(srcdir)/xdg-output-unstable-v1-protocol.h
-	$(CC) -c $< $(BARLIBS) $(BARCFLAGS) -o $@
-$(srcdir)/wlr-layer-shell-unstable-v1-protocol.o: $(srcdir)/wlr-layer-shell-unstable-v1-protocol.c $(srcdir)/wlr-layer-shell-unstable-v1-protocol.h
+$(srcdir)/%.o: $(srcdir)/%.c $(srcdir)/%.h
 	$(CC) -c $< $(BARLIBS) $(BARCFLAGS) -o $@
 
 $(srcdir)/xdg-shell-protocol.h:
@@ -57,7 +53,7 @@ $(srcdir)/wlr-layer-shell-unstable-v1-protocol.c:
 		protocols/wlr-layer-shell-unstable-v1.xml $@
 
 $(srcdir)/config.h:
-	cp config.def.h $@
+	cp src/config.def.h $@
 
 clean:
 	rm -f dwl-bar src/*.o src/*-protocol.*
