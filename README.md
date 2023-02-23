@@ -23,4 +23,4 @@ If you want dwl-bar to control dwl (via mouse usage primarily) you may want to a
 For more information about patching see the [hacking](https://suckless.org/hacking/) article from suckless.
 
 ## Thanks
-Thanks to raphi for somebar this project is largely just somebar but in C and a few tweaks to make it similar to dwm. The ipc protocol is also just the ipc patch in somebar's `contrib/`.
+Thanks to [raphi](https://sr.ht/~raphi/) for [somebar](https://sr.ht/~raphi/somebar/) this project is largely just somebar but in C and a few tweaks to make it similar to dwm. The ipc protocol is also just the ipc patch in [somebar's `contrib/`](https://git.sr.ht/~raphi/somebar/tree/master/item/contrib/ipc.patch).
