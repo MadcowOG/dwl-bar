@@ -65,7 +65,6 @@ static Font getFont(void);
 static BarComponent bar_component_create(PangoContext* context, PangoFontDescription* description);
 static void bar_component_render(Bar* bar, BarComponent* component, cairo_t* painter, uint width, int* x);
 static int bar_component_width(BarComponent* component);
-static int bar_component_height(BarComponent* component);
 
 static Font bar_font = {NULL, 0};
 
@@ -137,12 +136,6 @@ int bar_component_width(BarComponent* component) {
     int w;
     pango_layout_get_size(component->layout, &w, NULL);
     return PANGO_PIXELS(w);
-}
-
-int bar_component_height(BarComponent* component) {
-    int h;
-    pango_layout_get_size(component->layout, NULL, &h);
-    return PANGO_PIXELS(h);
 }
 
 void bar_set_colorscheme(Bar* bar, const int** scheme) {
