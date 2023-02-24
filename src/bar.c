@@ -316,6 +316,7 @@ Bar* bar_create(void) {
     char* status = ecalloc(8, sizeof(*status));
     snprintf(status, 8, "dwl %.1f", VERSION);
     pango_layout_set_text(bar->status.layout, status, strlen(status));
+    free(status);
 
     for (int i = 0; i < LENGTH(tags); i++) {
         BarComponent component = bar_component_create(bar->context, bar_font.description);
