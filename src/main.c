@@ -306,7 +306,7 @@ void capabilites(void* data, wl_seat* wl_seat, uint32_t capabilities) {
   }
 }
 
-static void name(void *data, zxdg_output_v1 *xdg_output, const char *name) {
+void name(void *data, zxdg_output_v1 *xdg_output, const char *name) {
   Monitor *monitor = data;
   monitor->xdg_name = strdup(name);
   zxdg_output_v1_destroy(xdg_output);
