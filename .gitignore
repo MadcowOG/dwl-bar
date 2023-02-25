@@ -4,6 +4,7 @@ run
 compile_flags.txt
 log.txt
 config.h
-src/xdg-shell-protocol.h
-src/xdg-output-unstable-v1-protocol.h
-src/wlr-layer-shell-unstable-v1-protocol.h
+xdg-shell-protocol.*
+xdg-output-unstable-v1-protocol.*
+wlr-layer-shell-unstable-v1-protocol.*
+dwl-bar-ipc-unstable-v1-protocol.*
