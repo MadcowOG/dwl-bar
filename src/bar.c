@@ -190,8 +190,8 @@ void bar_tags_render(Bar* bar, cairo_t* painter, int* x) {
             goto done;
 
         /*  Creating the occupied tag box */
-        int boxHeight = bar_font.height / 9;
-        int boxWidth = bar_font.height / 6 + 1;
+        int boxHeight = bar_font.height / 9,
+            boxWidth  = bar_font.height / 6 + 1;
 
         if (tag->focusedClient) {
           cairo_rectangle(painter, *x + boxHeight, boxHeight, boxWidth, boxWidth);
