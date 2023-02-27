@@ -270,7 +270,7 @@ void button(void *data, wl_pointer *pointer, uint32_t serial, uint32_t time,
   return;
 }
 
-static void frame(void* data, wl_pointer* pointer) {
+void frame(void* data, wl_pointer* pointer) {
   Seat seat = *(Seat*)data;
   Monitor* monitor = seat.pointer->focused_monitor;
   if (!monitor)
