@@ -34,12 +34,6 @@
 #define EQUAL 0
 #define POLLFDS 4
 
-// TODO Create Github for dwl-bar then patchset for dwl-bar ipc
-//
-// TODO Get the ipc wayland protocol working.
-//      + Include a `hide` / `toggle_visibility` event so that the bar can hide itself when the user asks.
-// TODO Create dwl-ipc patchset then submit to dwl wiki.
-
 typedef struct Monitor {
   char *xdg_name;
   uint32_t registry_name;
