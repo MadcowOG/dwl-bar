@@ -233,8 +233,8 @@ void bar_title_render(Bar* bar, cairo_t* painter, int* x) {
     if (!bar->floating)
         goto done;
 
-    int boxHeight = bar_font.height / 9;
-    int boxWidth = bar_font.height / 6 + 1;
+    int boxHeight = bar_font.height / 9,
+        boxWidth  = bar_font.height / 6 + 1;
 
     set_color(painter, grey3);
     cairo_rectangle(painter, *x + boxHeight + 0.5, boxHeight + 0.5, boxWidth, boxWidth);
