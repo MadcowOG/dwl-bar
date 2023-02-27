@@ -311,9 +311,10 @@ Bar* bar_create(void) {
     pango_layout_set_text(bar->status.layout, status, strlen(status));
     free(status);
 
-    for (int i = 0; i < LENGTH(tags); i++) {
+    for ( int i = 0; i < WL_ARRAY_LENGTH(&tags, char**); i++ ) { // Initalize the tags
         BarComponent component = bar_component_create(bar->context, bar_font.description);
-        pango_layout_set_text(component.layout, tags[i], strlen(tags[i]));
+        char* name = *WL_ARRAY_AT(&tags, char**, i);
+        pango_layout_set_text(component.layout, name, strlen(name));
         Tag tag = { 0, 0, 0, component };
         bar->tags[i] = tag;
     }
@@ -347,7 +348,7 @@ void bar_destroy(Bar* bar) {
     if ( bar->title.layout )
         g_object_unref(bar->title.layout);
 
-    for ( i = 0; i < LENGTH(tags); i++) {
+    for ( i = 0; i < LENGTH(bar->tags); i++) {
         Tag tag = bar->tags[i];
         if (tag.component.layout)
             g_object_unref(tag.component.layout);
@@ -387,6 +388,19 @@ void bar_show(Bar* bar, wl_output* output) {
     zwlr_layer_surface_v1_set_exclusive_zone(bar->layer_surface, height);
     wl_surface_commit(bar->surface);
 
+}
+
+void bar_hide(Bar* bar) {
+    if (!bar_is_visible(bar))
+        return;
+
+    zwlr_layer_surface_v1_destroy(bar->layer_surface);
+    wl_surface_destroy(bar->surface);
+    shm_destroy(bar->shm);
+
+    bar->surface = NULL;
+    bar->layer_surface = NULL;
+    bar->shm = NULL;
 }
 
 int bar_is_visible(Bar* bar) {

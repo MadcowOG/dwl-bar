@@ -1,7 +1,10 @@
 #ifndef COMMON_H_
 #define COMMON_H_
+#include "dwl-bar-ipc-unstable-v1-protocol.h"
 #include "xdg-output-unstable-v1-protocol.h"
 #include <stddef.h>
+#include <stdlib.h>
+#include <string.h>
 #include <sys/types.h>
 #include <stdio.h>
 #include <wayland-client-protocol.h>
@@ -10,6 +13,8 @@
 
 #define VERSION 1.0
 #define LENGTH(X) (sizeof X / sizeof X[0] )
+#define WL_ARRAY_LENGTH(array, type) ((array)->size/sizeof(type))
+#define WL_ARRAY_AT(array, type, index) ((type)((array)->data)+index)
 
 // Commonly used typedefs which makes using these structs easier.
 typedef struct wl_registry wl_registry;
@@ -37,12 +42,15 @@ typedef struct wl_array wl_array;
 typedef struct wl_cursor_theme wl_cursor_theme;
 typedef struct wl_cursor_image wl_cursor_image;
 typedef struct pollfd pollfd;
+typedef struct zdwl_output_v1 zdwl_output_v1;
+typedef struct zdwl_manager_v1 zdwl_manager_v1;
 typedef enum wl_shm_format wl_shm_format;
 
 extern wl_display* display;
 extern wl_compositor* compositor;
 extern wl_shm* shm;
 extern zwlr_layer_shell_v1* shell;
+extern wl_array tags, layouts;
 
 struct Monitor;
 
@@ -70,5 +78,9 @@ void* ecalloc(size_t amnt, size_t size);
  * Usually used for when clicking buttons with a pointer.
  */
 void spawn(struct Monitor* monitor, const Arg* arg);
+void layout(struct Monitor* monitor, const Arg* arg);
+void view(struct Monitor* monitor, const Arg* arg);
+void toggle_view(struct Monitor* monitor, const Arg* arg);
+void tag(struct Monitor* monitor, const Arg* arg);
 
 #endif // COMMON_H_

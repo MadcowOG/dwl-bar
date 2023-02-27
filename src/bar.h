@@ -22,6 +22,7 @@ Bar* bar_create(void);
 void bar_destroy(Bar* bar);
 void bar_invalidate(Bar* bar);
 void bar_show(Bar* bar, wl_output* output);
+void bar_hide(Bar* bar);
 int bar_is_visible(Bar* bar);
 void bar_click(Bar* bar, struct Monitor* monitor, int x, int y, uint32_t button);
 void bar_set_status(Bar* bar, const char* text);

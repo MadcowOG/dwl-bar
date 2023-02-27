@@ -26,7 +26,7 @@ WAYLAND_PROTOCOLS = `$(PKG_CONFIG) --variable=pkgdatadir wayland-protocols`
 srcdir := src
 
 all: dwl-bar
-dwl-bar: $(srcdir)/xdg-shell-protocol.o $(srcdir)/xdg-output-unstable-v1-protocol.o $(srcdir)/wlr-layer-shell-unstable-v1-protocol.o $(srcdir)/main.c $(srcdir)/bar.c $(srcdir)/shm.c $(srcdir)/config.h
+dwl-bar: $(srcdir)/xdg-shell-protocol.o $(srcdir)/xdg-output-unstable-v1-protocol.o $(srcdir)/wlr-layer-shell-unstable-v1-protocol.o $(srcdir)/dwl-bar-ipc-unstable-v1-protocol.o $(srcdir)/main.c $(srcdir)/bar.c $(srcdir)/shm.c $(srcdir)/config.h
 	$(CC) $^ $(BARLIBS) $(BARCFLAGS) -o $@
 $(srcdir)/%.o: $(srcdir)/%.c $(srcdir)/%.h
 	$(CC) -c $< $(BARLIBS) $(BARCFLAGS) -o $@
@@ -51,6 +51,13 @@ $(srcdir)/wlr-layer-shell-unstable-v1-protocol.h:
 $(srcdir)/wlr-layer-shell-unstable-v1-protocol.c:
 	$(WAYLAND_SCANNER) private-code \
 		protocols/wlr-layer-shell-unstable-v1.xml $@
+
+$(srcdir)/dwl-bar-ipc-unstable-v1-protocol.h:
+	$(WAYLAND_SCANNER) client-header \
+		protocols/dwl-bar-ipc-unstable-v1.xml $@
+$(srcdir)/dwl-bar-ipc-unstable-v1-protocol.c:
+	$(WAYLAND_SCANNER) private-code \
+		protocols/dwl-bar-ipc-unstable-v1.xml $@
 
 $(srcdir)/config.h:
 	cp src/config.def.h $@

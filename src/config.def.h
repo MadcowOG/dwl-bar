@@ -32,16 +32,16 @@ static const int* schemes[3][2] = {
 };
 
 /*
- * Tags
- */
-static const char* tags[] = { "1", "2", "3", "4", "5", "6", "7", "8", "9" };
-
-/*
  * Buttons
  * Structure is:
  * { click location, button clicked (linux event codes), function to run, other argument input (usage varies) }
  */
 static const Button buttons[] = {
+{ Click_Tag,    BTN_LEFT,   view,         {0}},
+{ Click_Tag,    BTN_MIDDLE, tag,          {0}},
+{ Click_Tag,    BTN_RIGHT,  toggle_view,  {0}},
+{ Click_Layout, BTN_LEFT,   layout,       {.ui = 0}},
+{ Click_Layout, BTN_RIGHT,  layout,       {.ui = 1}},
 { Click_Status, BTN_MIDDLE, spawn,        {.v = terminal } },
 };
 
