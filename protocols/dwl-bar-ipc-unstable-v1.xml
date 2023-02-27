@@ -10,7 +10,7 @@ I would probably just submit raphi's patchset but I don't think that would be po
     Warning! This protocol is experimental and may make backward incompatible changes.
   </description>
 
-  <interface name="zdwl_manager_v1" version="1">
+  <interface name="zdwl_manager_v1" version="2">
     <description summary="manage dwl state">
       This interface is exposed as a global in wl_registry.
 
@@ -51,7 +51,7 @@ I would probably just submit raphi's patchset but I don't think that would be po
     </event>
   </interface>
 
-  <interface name="zdwl_output_v1" version="1">
+  <interface name="zdwl_output_v1" version="2">
     <description summary="control dwl output">
       Observe and control a dwl output.
 
@@ -110,6 +110,13 @@ I would probably just submit raphi's patchset but I don't think that would be po
         Indicates the title has changed.
       </description>
       <arg name="title" type="string" summary="The new title name."/>
+    </event>
+
+    <event name="appid">
+      <description summary="Update the appid.">
+        Indicates the appid has changed.
+      </description>
+      <arg name="appid" type="string" summary="The new appid."/>
     </event>
 
     <event name="frame">
