@@ -5,9 +5,18 @@ I would probably just submit raphi's patchset but I don't think that would be po
 -->
 <protocol name="dwl_bar_ipc_unstable_v1">
   <description summary="inter-proccess-communication about dwl's state">
-    This protocol allows clients to get updates from dwl and vice versa.
+      This protocol allows clients to get updates from dwl and vice versa.
 
-    Warning! This protocol is experimental and may make backward incompatible changes.
+      Warning! The protocol described in this file is experimental and
+      backward incompatible changes may be made. Backward compatible
+      changes may be added together with the corresponding interface
+      version bump.
+      Backward incompatible changes are done by bumping the version
+      number in the protocol and interface names and resetting the
+      interface version. Once the protocol is to be declared stable,
+      the 'z' prefix and the version number in the protocol and
+      interface names are removed and the interface version number is
+      reset.
   </description>
 
   <interface name="zdwl_manager_v1" version="2">
@@ -112,7 +121,7 @@ I would probably just submit raphi's patchset but I don't think that would be po
       <arg name="title" type="string" summary="The new title name."/>
     </event>
 
-    <event name="appid">
+    <event name="appid" since="2">
       <description summary="Update the appid.">
         Indicates the appid has changed.
       </description>

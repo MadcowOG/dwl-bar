@@ -113,9 +113,6 @@ static void set_layout(void* data, zdwl_output_v1* zdwl_output_v1, uint32_t layo
 static void title(void* data, zdwl_output_v1* zdwl_output_v1, const char* title);
 static void dwl_frame(void* data, zdwl_output_v1* zdwl_output_v1);
 
-/* dwl_output listener noop */
-static void appid(void* data, zdwl_output_v1* zdwl_output_v1, const char* appid) {}
-
 /* xdg listener members */
 static void ping(void *data, xdg_wm_base *xdg_wm_base, uint32_t serial);
 
@@ -210,7 +207,6 @@ static const struct zdwl_output_v1_listener dwl_ouptut_listener = {
     .layout = set_layout,
     .tag = set_tag,
     .title = title,
-    .appid = appid,
 };
 
 static const struct wl_seat_listener seat_listener = {
