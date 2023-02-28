@@ -1,0 +1,26 @@
+.TH dwl-bar 1 dwl-bar\-VERSION
+.SH NAME
+dwl-bar \- dwm-like bar for dwl
+.SH SYNOPSIS
+.B dwl-bar
+.RB [\-v]
+.SH DESCRIPTION
+dwl-bar is a status bar for dwl.
+.SH OPTIONS
+.B \-h
+prints help message and exits.
+.B \-v
+prints version and exits.
+.SH USAGE
+.SS Status
+.TP
+.B $XDG_RUNTIME_DIR/dwl-bar-x
+can be written into with the prefix 'status' to change the bar's status.
+.SS Mouse Commands
+.TP
+.B Middle Button
+Click the middle mouse button on the status label to open a terminal.
+.SH CUSTOMIZATION
+dwl-bar is customized through config.def.h and (re)compiling.
+.SH SEE ALSO
+.BR dwl (1)

@@ -815,13 +815,13 @@ int main(int argc, char *argv[]) {
   while ((opt = getopt(argc, argv, "vh")) != -1) {
     switch (opt) {
     case 'h':
-      printf("Usage: [-h] [-v]\n");
+      printf("Usage: %s [-h] [-v]\n", argv[0]);
       printf("  -h: show this\n");
       printf("  -v: get version\n");
       exit(0);
 
     case 'v':
-      printf("A Version");
+      printf("dwl %f", VERSION);
       exit(0);
     }
   }
