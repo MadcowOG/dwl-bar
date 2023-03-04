@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 #include <wayland-client-protocol.h>
 
 #include <pango-1.0/pango/pangocairo.h>
@@ -9,14 +10,19 @@
 #include "config.h"
 #include "bar.h"
 #include "common.h"
+#include "pango/pango-font.h"
+#include "pango/pango-layout.h"
 #include "shm.h"
 #include "wlr-layer-shell-unstable-v1-protocol.h"
 #include "xdg-shell-protocol.h"
+
+#define ELIPSES 3
 
 typedef struct Font {
     PangoFontDescription* description;
 
     uint height; /* This is also the same as lrpad from dwm. */
+    uint approx_width;
 } Font;
 
 typedef struct BarComponent {
@@ -50,6 +56,7 @@ struct Bar {
     Shm* shm;
 };
 
+static char *add_elipses(const char *str, int i);
 static void layerSurface(void* data, zwlr_layer_surface_v1*, uint32_t serial, uint32_t width, uint32_t height);
 static void frame(void* data, wl_callback* callback, uint32_t callback_data);
 static void bar_render(Bar* bar);
@@ -116,13 +123,25 @@ Font getFont(void) {
     if (!metrics)
         die("font metrics");
 
-    Font in = {desc, PANGO_PIXELS(pango_font_metrics_get_height(metrics))};
+    Font in = {
+        desc,
+        PANGO_PIXELS(pango_font_metrics_get_height(metrics)),
+        PANGO_PIXELS(pango_font_metrics_get_approximate_char_width(metrics))
+    };
 
     pango_font_metrics_unref(metrics);
     g_object_unref(fnt);
     g_object_unref(context);
 
     return in;
+}
+
+char *add_elipses(const char *str, int i) {
+    char *new_str = ecalloc(i+ELIPSES+1, sizeof(char));
+    new_str       = strncpy(new_str, str, i*sizeof(char));
+    new_str[i+1]  = '\0';
+    new_str       = strcat(new_str, "...");
+    return new_str;
 }
 
 BarComponent bar_component_create(PangoContext* context, PangoFontDescription* description) {
@@ -223,8 +242,38 @@ void bar_title_render(Bar* bar, cairo_t* painter, int* x) {
     if (!bar)
         return;
 
-    // HUH For some reason ww - x - (status width) works, but ww - x - status width doesn't?
-    uint titleWidth = bar->shm->width - *x - (bar_component_width(&bar->status) + bar_font.height);
+    // @HUH: For some reason ww - x - (status width) works, but ww - x - status width doesn't?
+    int titleWidth = bar->shm->width - bar->layout.x - (bar_component_width(&bar->status) + bar_font.height);
+
+    /* If the status is larger than the title
+     * or
+     * a character can't fit in the title.
+     * Hopefully this helps avoid situations where the title is empty
+     * and renders but usually if filled wouldn't.
+     */
+    if (titleWidth < 0 || bar_font.approx_width+bar_font.height > titleWidth)
+        return;
+
+    /* If not all text fills the title component
+     * Then fit as much as possible.
+     */
+    if ((bar_component_width(&bar->title) + bar_font.height) > titleWidth) {
+        const char *text = pango_layout_get_text(bar->title.layout);
+        char *newText;
+        int i = 0;
+
+        for (i = strlen(text); (((i+ELIPSES)*bar_font.approx_width)+bar_font.height > titleWidth
+                    && i >= 0); i--);
+
+        if (i <= 0) {
+            pango_layout_set_text(bar->title.layout, "", -1);
+        } else {
+            // This is dumb but whatever.
+            newText = add_elipses(text, i);
+            pango_layout_set_text(bar->title.layout, newText, -1);
+            free(newText);
+        }
+    }
 
     bar->active ? bar_set_colorscheme(bar, schemes[Active_Scheme]) : bar_set_colorscheme(bar, schemes[InActive_Scheme]);
 
@@ -250,6 +299,27 @@ void bar_status_render(Bar* bar, cairo_t* painter, int* x) {
         return;
 
     uint statusWidth = bar_component_width(&bar->status) + bar_font.height;
+
+    // If the status is as large or larger than the layout then fit as much as we can.
+    if (statusWidth > (bar->shm->width - bar->layout.x)) {
+        const char *text = pango_layout_get_text(bar->status.layout);
+        char *newText;
+        int i = 0;
+
+        for (i = strlen(text); (((i+ELIPSES)*bar_font.approx_width)+bar_font.height > (bar->shm->width - bar->layout.x)
+                    && i >= 0); i--);
+
+        if (i <= 0) {
+            pango_layout_set_text(bar->title.layout, "", -1);
+        } else {
+            // This is dumb but whatever.
+            newText = add_elipses(text, i);
+            pango_layout_set_text(bar->status.layout, newText, -1);
+            free(newText);
+        }
+
+        statusWidth = bar->shm->width - bar->layout.x;
+    }
 
     bar_set_colorscheme(bar, schemes[InActive_Scheme]);
     if (!bar->active && status_on_active)

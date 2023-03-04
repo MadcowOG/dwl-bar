@@ -1,4 +1,5 @@
 .projectile
+dwl-bar
 bar
 run
 compile_flags.txt

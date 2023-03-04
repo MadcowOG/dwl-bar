@@ -611,6 +611,8 @@ void handle_stdin(char* line) {
     bar_set_title(monitor->bar, title);
     free(title);
 
+  } else if (strcmp(command, "appid") == EQUAL) {
+      /* Do nothing */
   } else if (strcmp(command, "floating") == EQUAL) {
     if (line[strlen(line)-2] == ' ') {
       bar_set_floating(monitor->bar, 0);
