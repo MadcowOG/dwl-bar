@@ -3,7 +3,7 @@
 #include "common.h"
 #include <linux/input-event-codes.h>
 
-static const int bar_top = 1; /* Boolean value, non-zero is true. If not top then bottom */
+static const int bar_top = 1;          /* Boolean value, non-zero is true. If not top then bottom */
 static const int status_on_active = 1; /* Display the status on active monitor only. If not then on all. */
 static const char* font = "Monospace 10";
 static const char* terminal[] = { "alacritty", NULL };
@@ -19,8 +19,8 @@ static const char* terminal[] = { "alacritty", NULL };
  * grey1 - used in an inactive background
  * grey2 - used in inactive text
  */
-static const int cyan[4]  = { 0, 85, 119, 255 };
-static const int grey1[4] = { 34, 34, 34, 255 };
+static const int cyan[4]  = { 0,   85,  119, 255 };
+static const int grey1[4] = { 34,  34,  34,  255 };
 static const int grey2[4] = { 187, 187, 187, 255 };
 static const int grey3[4] = { 238, 238, 238, 255 };
 
