@@ -56,7 +56,7 @@ struct Bar {
     Shm* shm;
 };
 
-static char *add_elipses(const char *str, int i);
+static void add_elipses(PangoLayout *layout, int current_size);
 static void layerSurface(void* data, zwlr_layer_surface_v1*, uint32_t serial, uint32_t width, uint32_t height);
 static void frame(void* data, wl_callback* callback, uint32_t callback_data);
 static void bar_render(Bar* bar);
@@ -136,12 +136,25 @@ Font getFont(void) {
     return in;
 }
 
-char *add_elipses(const char *str, int i) {
-    char *new_str = ecalloc(i+ELIPSES+1, sizeof(char));
-    new_str       = strncpy(new_str, str, i*sizeof(char));
-    new_str[i+1]  = '\0';
-    new_str       = strcat(new_str, "...");
-    return new_str;
+void add_elipses(PangoLayout *layout, int current_size) {
+    const char *str = pango_layout_get_text(layout);
+    char *new_str;
+    int i = 0;
+
+    for (i = strlen(str); (((i+ELIPSES)*bar_font.approx_width)+bar_font.height > current_size
+                && i >= 0); i--);
+
+    if (i <= 0) {
+        pango_layout_set_text(layout, "", -1);
+    } else {
+        new_str       = ecalloc(i+ELIPSES+1, sizeof(char));
+        new_str       = strncpy(new_str, str, i*sizeof(char));
+        new_str[i+1]  = '\0';
+        new_str       = strcat(new_str, "...");
+
+        pango_layout_set_text(layout, new_str, -1);
+        free(new_str);
+    }
 }
 
 BarComponent bar_component_create(PangoContext* context, PangoFontDescription* description) {
@@ -249,7 +262,7 @@ void bar_title_render(Bar* bar, cairo_t* painter, int* x) {
      * or
      * a character can't fit in the title.
      * Hopefully this helps avoid situations where the title is empty
-     * and renders but usually if filled wouldn't.
+     * and renders but wouldn't if it had text.
      */
     if (titleWidth < 0 || bar_font.approx_width+bar_font.height > titleWidth)
         return;
@@ -257,23 +270,8 @@ void bar_title_render(Bar* bar, cairo_t* painter, int* x) {
     /* If not all text fills the title component
      * Then fit as much as possible.
      */
-    if ((bar_component_width(&bar->title) + bar_font.height) > titleWidth) {
-        const char *text = pango_layout_get_text(bar->title.layout);
-        char *newText;
-        int i = 0;
-
-        for (i = strlen(text); (((i+ELIPSES)*bar_font.approx_width)+bar_font.height > titleWidth
-                    && i >= 0); i--);
-
-        if (i <= 0) {
-            pango_layout_set_text(bar->title.layout, "", -1);
-        } else {
-            // This is dumb but whatever.
-            newText = add_elipses(text, i);
-            pango_layout_set_text(bar->title.layout, newText, -1);
-            free(newText);
-        }
-    }
+    if ((bar_component_width(&bar->title) + bar_font.height) > titleWidth)
+        add_elipses(bar->title.layout, titleWidth);
 
     bar->active ? bar_set_colorscheme(bar, schemes[Active_Scheme]) : bar_set_colorscheme(bar, schemes[InActive_Scheme]);
 
@@ -301,25 +299,8 @@ void bar_status_render(Bar* bar, cairo_t* painter, int* x) {
     uint statusWidth = bar_component_width(&bar->status) + bar_font.height;
 
     // If the status is as large or larger than the layout then fit as much as we can.
-    if (statusWidth > (bar->shm->width - bar->layout.x)) {
-        const char *text = pango_layout_get_text(bar->status.layout);
-        char *newText;
-        int i = 0;
-
-        for (i = strlen(text); (((i+ELIPSES)*bar_font.approx_width)+bar_font.height > (bar->shm->width - bar->layout.x)
-                    && i >= 0); i--);
-
-        if (i <= 0) {
-            pango_layout_set_text(bar->title.layout, "", -1);
-        } else {
-            // This is dumb but whatever.
-            newText = add_elipses(text, i);
-            pango_layout_set_text(bar->status.layout, newText, -1);
-            free(newText);
-        }
-
-        statusWidth = bar->shm->width - bar->layout.x;
-    }
+    if (statusWidth > (bar->shm->width - bar->layout.x))
+        add_elipses(bar->status.layout, (bar->shm->width - bar->layout.x));
 
     bar_set_colorscheme(bar, schemes[InActive_Scheme]);
     if (!bar->active && status_on_active)
