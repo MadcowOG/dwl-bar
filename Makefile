@@ -8,6 +8,7 @@
 
 VERSION    = 1.0
 PKG_CONFIG = pkg-config
+PKG_EXISTS = $(PKG_CONFIG) --exists
 
 #paths
 PREFIX = /usr/local
@@ -26,7 +27,7 @@ WAYLAND_PROTOCOLS = `$(PKG_CONFIG) --variable=pkgdatadir wayland-protocols`
 srcdir := src
 
 all: dwl-bar
-dwl-bar: $(srcdir)/xdg-shell-protocol.o $(srcdir)/xdg-output-unstable-v1-protocol.o $(srcdir)/wlr-layer-shell-unstable-v1-protocol.o $(srcdir)/main.c $(srcdir)/bar.c $(srcdir)/shm.c $(srcdir)/config.h
+dwl-bar: $(srcdir)/xdg-shell-protocol.o $(srcdir)/xdg-output-unstable-v1-protocol.o $(srcdir)/wlr-layer-shell-unstable-v1-protocol.o $(srcdir)/dwl-bar-ipc-unstable-v1-protocol.o $(srcdir)/main.c $(srcdir)/bar.c $(srcdir)/shm.c $(srcdir)/config.h $(srcdir)/lib.h
 	$(CC) $^ $(BARLIBS) $(BARCFLAGS) -o $@
 $(srcdir)/%.o: $(srcdir)/%.c $(srcdir)/%.h
 	$(CC) -c $< $(BARLIBS) $(BARCFLAGS) -o $@
@@ -52,11 +53,19 @@ $(srcdir)/wlr-layer-shell-unstable-v1-protocol.c:
 	$(WAYLAND_SCANNER) private-code \
 		protocols/wlr-layer-shell-unstable-v1.xml $@
 
+$(srcdir)/lib.h:
+	touch $(srcdir)/lib.h
+	echo -e "#ifndef LIB_H_\n#define LIB_H_\n" > $(srcdir)/lib.h
+	{ $(PKG_EXISTS) libsystemd && echo -e "#define SYSTEMD 1\n" | tee -a $(srcdir)/lib.h; } || echo -e "#define SYSTEMD 0\n" | tee -a $(srcdir)/lib.h;
+	{ $(PKG_EXISTS) libelogind && echo -e "#define ELOGIND 1\n" | tee -a $(srcdir)/lib.h; } || echo -e "#define ELOGIND 0\n" | tee -a $(srcdir)/lib.h;
+	{ $(PKG_EXISTS) basu 	   && echo -e "#define BASU 1\n"    | tee -a $(srcdir)/lib.h; } || echo -e "#define BASU 0\n" 	 | tee -a $(srcdir)/lib.h;
+	echo "#endif // LIB_H_" | tee -a $(srcdir)/lib.h
+
 $(srcdir)/config.h:
 	cp src/config.def.h $@
 
 clean:
-	rm -f dwl-bar src/*.o src/*-protocol.*
+	rm -f dwl-bar src/*.o src/*-protocol.* src/lib.h
 
 dist: clean
 	mkdir -p dwl-bar-$(VERSION)
