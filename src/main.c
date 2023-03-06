@@ -666,7 +666,7 @@ void handle_stdin(char* line) {
     bar_set_layout(monitor->bar, layout);
     free(layout);
   } else {
-    die("command unrecognized");
+      /* TODO: Find a good way to tell the user a command wasn't recognized. Or just do nothing? */
   }
 
   done:
@@ -838,7 +838,7 @@ int main(int argc, char *argv[]) {
 void die(const char *fmt, ...) {
   va_list ap;
   va_start(ap, fmt);
-  fprintf(stderr, "error: ");
+  fprintf(stderr, "dwl-bar error: ");
   vfprintf(stderr, fmt, ap);
   va_end(ap);
 
