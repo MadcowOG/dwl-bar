@@ -207,6 +207,11 @@ void bar_tags_render(Bar* bar, cairo_t* painter, int* x) {
         Tag* tag = &bar->tags[i];
         uint tagWidth = bar_component_width(&tag->component) + bar_font.height;
 
+        if (!tag->occupied && !(tag->state & Active)) {
+            tag->component.x = 0; /* So the tag isn't identified when clicking, hopefully. */
+            continue;
+        }
+
         /* Creating the tag */
         if (tag->state & TAG_ACTIVE) {
             bar_set_colorscheme(bar, schemes[Active_Scheme]);
@@ -218,23 +223,6 @@ void bar_tags_render(Bar* bar, cairo_t* painter, int* x) {
 
         bar_component_render(bar, &tag->component, painter, tagWidth, x);
 
-        if (!tag->occupied)
-            goto done;
-
-        /*  Creating the occupied tag box */
-        int boxHeight = bar_font.height / 9,
-            boxWidth  = bar_font.height / 6 + 1;
-
-        if (tag->focusedClient) {
-          cairo_rectangle(painter, *x + boxHeight, boxHeight, boxWidth, boxWidth);
-          cairo_fill(painter);
-        } else {
-          cairo_rectangle(painter, *x + boxHeight + 0.5, boxHeight + 0.5, boxWidth, boxWidth);
-          cairo_set_line_width(painter, 1);
-          cairo_stroke(painter);
-        }
-
-        done:
         *x += tagWidth;
     }
 }
