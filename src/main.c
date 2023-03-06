@@ -838,7 +838,7 @@ int main(int argc, char *argv[]) {
 void die(const char *fmt, ...) {
   va_list ap;
   va_start(ap, fmt);
-  fprintf(stderr, "dwl-bar error: ");
+  fprintf(stderr, "[dwl-bar] error: ");
   vfprintf(stderr, fmt, ap);
   va_end(ap);
 
@@ -849,6 +849,7 @@ void die(const char *fmt, ...) {
   } else {
     fputc('\n', stderr);
   }
+  fflush(stderr);
 
   cleanup();
   exit(1);
