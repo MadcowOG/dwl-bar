@@ -18,7 +18,7 @@ Compile with `make`, install with `make install`, uninstall `make uninstall`.
 Like most suckless-like software, configuration is done through `src/config.def.h` modify it to your heart's content. dwl-bar is compatible with [someblocks](https://sr.ht/~raphi/someblocks/) for status.
 
 If you want dwl-bar to control dwl (via mouse usage primarily) you may want to apply the [ipc](https://github.com/MadcowOG/dwl-bar/compare/ipc.patch) patch. 
-**However do note that you will also need to apply the [bar-ipc](https://github.com/djpohly/dwl/wiki/bar-ipc) patch for dwl.**
+**However do note that you will also need to apply the [ipc](https://github.com/djpohly/dwl/wiki/ipc) patch for dwl.**
 
 For more information about patching see the [hacking](https://suckless.org/hacking/) article from suckless.
 
