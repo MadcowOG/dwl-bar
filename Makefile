@@ -69,7 +69,7 @@ install: dwl-bar
 	mkdir -p $(PREFIX)/bin
 	cp -f dwl-bar $(PREFIX)/bin
 	chmod 755 $(PREFIX)/bin/dwl-bar
-	mkdir -p $(PREFIX)/man1
+	mkdir -p $(MANDIR)/man1
 	cp -f dwl-bar.1 $(MANDIR)/man1
 	chmod 644 $(MANDIR)/man1/dwl-bar.1
 
