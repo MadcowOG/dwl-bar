@@ -570,7 +570,7 @@ char* get_line(int fd) {
     return NULL;
 
   buffer[i] = '\0';
-  output = strcpy(ecalloc(i, sizeof(*output)), buffer);
+  output = strncpy(ecalloc(i, sizeof(char)), buffer, i*sizeof(char));
 
   return output;
 }
@@ -579,7 +579,8 @@ void on_stdin(void) {
   while (1) {
     char *buffer = get_line(STDIN_FILENO);
     if (!buffer || !strlen(buffer)) {
-      free(buffer);
+        if (buffer)
+            free(buffer);
       return;
     }
 
