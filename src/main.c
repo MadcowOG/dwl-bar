@@ -537,9 +537,8 @@ char* to_delimiter(char* string, ulong *start_end, char delimiter) {
     return NULL;
 
   for ( i = *start_end; i < len; i++ ) {
-    if (string[i] == delimiter || i == len-1) { // We've reached the delimiter or the end.
+    if (string[i] == delimiter) // We've reached the delimiter or the end.
       break;
-    }
   }
 
   /* Create and copy the substring what we need */
@@ -680,17 +679,16 @@ void on_status(void) {
     char *line = get_line(fifo_fd), *command, *status;
     ulong loc = 0;
     if (!line || !strlen(line)) {
-      free(line);
+      if (line)
+        free(line);
       return;
     }
 
     command = to_delimiter(line, &loc, ' ');
     status  = to_delimiter(line, &loc, '\n');
 
-    if (strcmp(command, "status") != EQUAL) {
-      free(status);
+    if (strcmp(command, "status") != EQUAL)
       goto done;
-    }
 
     Monitor *current_monitor;
     wl_list_for_each(current_monitor, &monitors, link) {
