@@ -803,9 +803,11 @@ void cleanup(void) {
     zwlr_layer_shell_v1_destroy(shell);
   if (output_manager)
     zxdg_output_manager_v1_destroy(output_manager);
+  if (fifo_fd)
+    close(fifo_fd);
   if (fifo_path) {
     unlink(fifo_path);
-    remove(fifo_path);
+    free(fifo_path);
   }
   if (display)
     wl_display_disconnect(display);
