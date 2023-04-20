@@ -1,35 +1,39 @@
 #ifndef BAR_H_
 #define BAR_H_
-#include "wlr-layer-shell-unstable-v1-protocol.h"
-#include <stdint.h>
-#include <sys/types.h>
-#include <wayland-client-protocol.h>
-#include "common.h"
 
-typedef struct Bar Bar;
+#include "config.h"
+#include "render.h"
 
 enum TagState {
-  None   = 0,
-  Active = 1,
-  Urgent = 2,
+  Tag_None   = 0,
+  Tag_Active = 1,
+  Tag_Urgent = 2,
 };
 
-#define TAG_INACTIVE None
-#define TAG_ACTIVE Active
-#define TAG_URGENT Urgent
+struct Tag {
+    unsigned int occupied, has_focused, state;
+    struct BasicComponent *component;
+};
 
-Bar* bar_create(void);
-void bar_destroy(Bar* bar);
-void bar_invalidate(Bar* bar);
-void bar_show(Bar* bar, wl_output* output);
-int bar_is_visible(Bar* bar);
-void bar_click(Bar* bar, struct Monitor* monitor, int x, int y, uint32_t button);
-void bar_set_status(Bar* bar, const char* text);
-void bar_set_title(Bar* bar, const char* text);
-void bar_set_layout(Bar* bar, const char* text);
-void bar_set_active(Bar* bar, uint is_active);
-void bar_set_floating(Bar* bar, uint is_floating);
-void bar_set_tag(Bar* bar, uint tag, uint state, uint occupied, uint focusedClient);
-wl_surface* bar_get_surface(Bar* bar);
+struct Bar {
+    struct Pipeline *pipeline;
+    struct BasicComponent *layout, *title, *status;
+    struct Tag tags[LENGTH(tags)];
+
+    unsigned int active, floating;
+    unsigned int x, y;
+};
+
+struct Bar *bar_create(struct List *hotspots, struct Pipeline *pipeline);
+void bar_destroy(struct Bar *bar);
+void bar_set_active(struct Bar *bar, unsigned int is_active);
+void bar_set_floating(struct Bar *bar, unsigned int is_floating);
+void bar_set_layout(struct Bar *bar, const char *text);
+void bar_set_status(struct Bar *bar, const char *text);
+void bar_set_tag(struct Bar *bar, unsigned int index,
+        unsigned int state, unsigned int occupied, unsigned int focusedClient);
+void bar_set_title(struct Bar *bar, const char *text);
+
+extern const struct PipelineListener bar_pipeline_listener;
 
 #endif // BAR_H_

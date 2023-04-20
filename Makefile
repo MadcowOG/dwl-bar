@@ -2,65 +2,71 @@
 # dwl-bar
 #
 # @file
-# @version 1.0
-.POSIX:
-.SUFFIXES:
-
-VERSION    = 1.0
+# @version 0.0
+VERSION    = 0.0
 PKG_CONFIG = pkg-config
 
-#paths
+# paths
 PREFIX = /usr/local
 MANDIR = $(PREFIX)/share/man
+SRCDIR = src
 
-# Compile flags
-CC 		  = gcc
-PKGS      = wayland-client wayland-cursor pangocairo
+PKGS   = wayland-client wayland-cursor pangocairo
+FILES  = $(SRCDIR)/main.c $(SRCDIR)/main.h $(SRCDIR)/log.c $(SRCDIR)/log.h \
+		 $(SRCDIR)/render.c $(SRCDIR)/render.h $(SRCDIR)/event.c $(SRCDIR)/event.h \
+		 $(SRCDIR)/util.c $(SRCDIR)/util.h $(SRCDIR)/shm.c $(SRCDIR)/shm.h \
+		 $(SRCDIR)/input.c $(SRCDIR)/input.h $(SRCDIR)/user.c $(SRCDIR)/user.h \
+		 $(SRCDIR)/bar.c $(SRCDIR)/bar.h $(SRCDIR)/config.h
+OBJS   = $(SRCDIR)/xdg-output-unstable-v1-protocol.o $(SRCDIR)/xdg-shell-protocol.o \
+		 $(SRCDIR)/wlr-layer-shell-unstable-v1-protocol.o
+
+## Compile Flags
+CC        = gcc
 BARCFLAGS = `$(PKG_CONFIG) --cflags $(PKGS)` $(CFLAGS)
 BARLIBS   = `$(PKG_CONFIG) --libs $(PKGS)` $(LIBS)
 
-# Wayland-scanner
 WAYLAND_SCANNER   = `$(PKG_CONFIG) --variable=wayland_scanner wayland-scanner`
 WAYLAND_PROTOCOLS = `$(PKG_CONFIG) --variable=pkgdatadir wayland-protocols`
 
-srcdir := src
 
 all: dwl-bar
-dwl-bar: $(srcdir)/xdg-shell-protocol.o $(srcdir)/xdg-output-unstable-v1-protocol.o $(srcdir)/wlr-layer-shell-unstable-v1-protocol.o $(srcdir)/main.c $(srcdir)/bar.c $(srcdir)/shm.c $(srcdir)/config.h
+dwl-bar: $(FILES) $(OBJS)
 	$(CC) $^ $(BARLIBS) $(BARCFLAGS) -o $@
-$(srcdir)/%.o: $(srcdir)/%.c $(srcdir)/%.h
+$(SRCDIR)/%.o: $(SRCDIR)/%.c $(SRCDIR)/%.h
 	$(CC) -c $< $(BARLIBS) $(BARCFLAGS) -o $@
 
-$(srcdir)/xdg-shell-protocol.h:
+$(SRCDIR)/xdg-shell-protocol.h:
 	$(WAYLAND_SCANNER) client-header \
 		$(WAYLAND_PROTOCOLS)/stable/xdg-shell/xdg-shell.xml $@
-$(srcdir)/xdg-shell-protocol.c:
+$(SRCDIR)/xdg-shell-protocol.c:
 	$(WAYLAND_SCANNER) private-code \
 		$(WAYLAND_PROTOCOLS)/stable/xdg-shell/xdg-shell.xml $@
 
-$(srcdir)/xdg-output-unstable-v1-protocol.h:
+$(SRCDIR)/xdg-output-unstable-v1-protocol.h:
 	$(WAYLAND_SCANNER) client-header \
 		$(WAYLAND_PROTOCOLS)/unstable/xdg-output/xdg-output-unstable-v1.xml $@
-$(srcdir)/xdg-output-unstable-v1-protocol.c:
+$(SRCDIR)/xdg-output-unstable-v1-protocol.c:
 	$(WAYLAND_SCANNER) private-code \
 		$(WAYLAND_PROTOCOLS)/unstable/xdg-output/xdg-output-unstable-v1.xml $@
 
-$(srcdir)/wlr-layer-shell-unstable-v1-protocol.h:
+$(SRCDIR)/wlr-layer-shell-unstable-v1-protocol.h:
 	$(WAYLAND_SCANNER) client-header \
 		protocols/wlr-layer-shell-unstable-v1.xml $@
-$(srcdir)/wlr-layer-shell-unstable-v1-protocol.c:
+$(SRCDIR)/wlr-layer-shell-unstable-v1-protocol.c:
 	$(WAYLAND_SCANNER) private-code \
 		protocols/wlr-layer-shell-unstable-v1.xml $@
 
-$(srcdir)/config.h:
+$(SRCDIR)/config.h:
 	cp src/config.def.h $@
 
+dev: clean $(SRCDIR)/config.h $(OBJS)
+
 clean:
-	rm -f dwl-bar src/*.o src/*-protocol.*
+	rm -f dwl-bar src/config.h src/*.o src/*-protocol.*
 
 dist: clean
 	mkdir -p dwl-bar-$(VERSION)
-	cp -R LICENSE Makefile README.md src patches protocols \
+	cp -R LICENSE Makefile README.md dwl-bar.1 src protocols \
 		dwl-bar-$(VERSION)
 	tar -caf dwl-bar-$(VERSION).tar.gz dwl-bar-$(VERSION)
 	rm -rf dwl-bar-$(VERSION)
@@ -69,7 +75,7 @@ install: dwl-bar
 	mkdir -p $(PREFIX)/bin
 	cp -f dwl-bar $(PREFIX)/bin
 	chmod 755 $(PREFIX)/bin/dwl-bar
-	mkdir -p $(PREFIX)/man1
+	mkdir -p $(MANDIR)/man1
 	cp -f dwl-bar.1 $(MANDIR)/man1
 	chmod 644 $(MANDIR)/man1/dwl-bar.1
 
