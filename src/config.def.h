@@ -1,12 +1,14 @@
 #ifndef CONFIG_H_
-#define CONFIG_H_
-#include "common.h"
+#define  CONFIG_H_
+
+#include "user.h"
+#include <stdlib.h>
 #include <linux/input-event-codes.h>
 
 static const int bar_top = 1;          /* Boolean value, non-zero is true. If not top then bottom */
 static const int status_on_active = 1; /* Display the status on active monitor only. If not then on all. */
-static const char* font = "Monospace 10";
-static const char* terminal[] = { "alacritty", NULL };
+static const char *font = "Monospace 10";
+static const char *terminal[] = { "alacritty", NULL };
 
 /*
  * Colors:
@@ -24,7 +26,7 @@ static const int grey1[4] = { 34,  34,  34,  255 };
 static const int grey2[4] = { 187, 187, 187, 255 };
 static const int grey3[4] = { 238, 238, 238, 255 };
 
-static const int* schemes[3][2] = {
+static const int *schemes[3][2] = {
     /* Scheme Type       fg,    bg */
     [InActive_Scheme] = {grey2, grey1},
     [Active_Scheme]   = {grey3, cyan},
@@ -34,15 +36,15 @@ static const int* schemes[3][2] = {
 /*
  * Tags
  */
-static const char* tags[] = { "1", "2", "3", "4", "5", "6", "7", "8", "9" };
+static const char *tags[] = { "1", "2", "3", "4", "5", "6", "7", "8", "9" };
 
 /*
  * Buttons
- * Structure is:
- * { click location, button clicked (linux event codes), function to run, other argument input (usage varies) }
+ * See user.h for details on relevant structures.
  */
-static const Button buttons[] = {
-{ Click_Status, BTN_MIDDLE, spawn,        {.v = terminal } },
+static const Binding bindings[] = {
+    /* Click Location,   button,        callback,     bypass,    arguments */
+    { Click_Status,      BTN_MIDDLE,    spawn,        0,         {.v = terminal } },
 };
 
 #endif // CONFIG_H_

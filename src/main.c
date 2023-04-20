@@ -1,866 +1,556 @@
+#include "bar.h"
+#include "event.h"
+#include "log.h"
+#include "render.h"
+#include "util.h"
+#include "main.h"
+#include "input.h"
+#include "xdg-output-unstable-v1-protocol.h"
+#include "xdg-shell-protocol.h"
+#include "wlr-layer-shell-unstable-v1-protocol.h"
+#include <math.h>
+#include <stddef.h>
+#include <stdlib.h>
+#include <getopt.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <errno.h>
+#include <poll.h>
+#include <sys/stat.h>
 #include <wayland-client-core.h>
 #include <wayland-client-protocol.h>
 #include <wayland-client.h>
-#include <wayland-cursor.h>
 #include <wayland-util.h>
 
-#include <stdarg.h>
-#include <stddef.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <getopt.h>
-#include <poll.h>
-#include <signal.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/types.h>
-#include <unistd.h>
-#include <sys/stat.h>
-
-#include "bar.h"
-#include "common.h"
-#include "config.h"
-#include "shm.h"
-#include "wlr-layer-shell-unstable-v1-protocol.h"
-#include "xdg-output-unstable-v1-protocol.h"
-#include "xdg-shell-protocol.h"
-
-/*
- * When checking to see if two strings are the same with strcmp,
- * 0 means they are the same, otherwise they are different.
- */
-#define EQUAL 0
-#define POLLFDS 4
-
-typedef struct Monitor {
-  char *xdg_name;
-  uint32_t registry_name;
-
-  wl_output *output;
-  Bar *bar;
-  wl_list link;
-} Monitor;
-
-typedef struct {
-  wl_pointer* pointer;
-  Monitor* focused_monitor;
-
-  int x, y;
-  uint32_t* buttons;
-  uint size;
-} Pointer;
-
-typedef struct {
-  uint32_t registry_name;
-  wl_seat* seat;
-  wl_list link;
-
-  Pointer* pointer;
-} Seat;
-
-typedef struct {
-  wl_output *output;
-  uint32_t name;
-  wl_list link;
-} uninitOutput;
-
-typedef struct {
-  wl_registry *registry;
-  uint32_t name;
-  const char *interface_str;
-} HandleGlobal;
-
+static void check_global(void *global, const char *name);
+static void check_globals(void);
 static void cleanup(void);
-static void setup(void);
-static void run(void);
-static void globalChecks(void);
-static void checkGlobal(void *global, const char *name);
-static void monitorSetup(uint32_t name, wl_output *output);
-static void set_cloexec(int fd);
-static void sighandler(int _);
-static void flush(void);
-static void setupFifo(void);
-static char* to_delimiter(char* string, ulong *start_end, char delimiter);
-static char* get_line(int fd);
-static void on_status(void);
-static void on_stdin(void);
-static void handle_stdin(char* line);
-static Monitor* monitor_from_name(char* name);
-static Monitor* monitor_from_surface(wl_surface* surface);
-static void update_monitor(Monitor* monitor);
-
-/* Register listener related functions */
-static void onGlobalAdd(void *data, wl_registry *registry, uint32_t name,
+static void display_in(int fd, short mask, void *data);
+static void fifo_handle(const char *line);
+static void fifo_in(int fd, short mask, void *data);
+static void fifo_setup(void);
+static void monitor_destroy(struct Monitor *monitor);
+static struct Monitor *monitor_from_name(const char *name);
+struct Monitor *monitor_from_surface(const struct wl_surface *surface);
+static void monitor_update(struct Monitor *monitor);
+static void pipe_in(int fd, short mask, void *data);
+static void registry_global_add(void *data, struct wl_registry *registry, uint32_t name,
                         const char *interface, uint32_t version);
-static void onGlobalRemove(void *data, wl_registry *registry, uint32_t name);
-static int regHandle(void **store, HandleGlobal helper,
-                     const wl_interface *interface, int version);
+static void registry_global_remove(void *data, struct wl_registry *registry, uint32_t name);
+static void run(void);
+static void set_cloexec(int fd);
+static void setup(void);
+static void stdin_handle(const char *line);
+static void stdin_in(int fd, short mask, void *data);
+static void sigaction_handler(int _);
+static void xdg_output_name(void *data, struct zxdg_output_v1 *output, const char *name);
+static void xdg_wm_base_ping(void *data, struct xdg_wm_base *xdg_wm_base, uint32_t serial);
 
-/* xdg listener members */
-static void ping(void *data, xdg_wm_base *xdg_wm_base, uint32_t serial);
-static void name(void *data, zxdg_output_v1 *output, const char *name);
-
-/* seat listener member */
-static void capabilites(void* data, wl_seat* wl_seat, uint32_t capabilities);
-
-/* pointer listener members */
-static void enter(void* data, wl_pointer* pointer, uint32_t serial, wl_surface* surface, wl_fixed_t x, wl_fixed_t y);
-static void leave(void* data, wl_pointer* pointer, uint32_t serial, wl_surface* surface);
-static void motion(void* data, wl_pointer* pointer, uint32_t time, wl_fixed_t x, wl_fixed_t y);
-static void button(void* data, wl_pointer* pointer, uint32_t serial, uint32_t time, uint32_t button, uint32_t state);
-static void frame(void* data, wl_pointer* pointer);
-
-/* Also pointer listener members, but we don't do anything in these functions */
-static void axis(void *data, struct wl_pointer *wl_pointer, uint32_t time, uint32_t axis, wl_fixed_t value) {}
-static void axis_source(void *data, struct wl_pointer *wl_pointer, uint32_t axis_source) {}
-static void axis_stop(void *data, struct wl_pointer *wl_pointer, uint32_t time, uint32_t axis) {}
-static void axis_discrete(void *data, struct wl_pointer *wl_pointer, uint32_t axis, int32_t discrete) {}
-static void seat_name(void* data, wl_seat* seat, const char* name) {}
-
-/* Globals */
-wl_display *display;
-wl_compositor *compositor;
-wl_shm *shm;
-zwlr_layer_shell_v1 *shell;
-static xdg_wm_base *base;
-static zxdg_output_manager_v1 *output_manager;
-
-/* Cursor */
-static wl_cursor_image* cursor_image;
-static wl_surface* cursor_surface;
-
-/* Lists */
-static wl_list seats;
-static wl_list monitors;
-static wl_list uninitializedOutputs;
-
-/* File Descriptors */
-static pollfd *pollfds;
-static int wl_display_fd;
-static int self_pipe[2];
+static struct xdg_wm_base *base;
+struct wl_compositor *compositor;
+static struct wl_display *display;
+static int display_fd;
+static struct Events *events;
 static int fifo_fd;
-static char* fifo_path;
-
-/* Sigactions */
-static struct sigaction sighandle;
-static struct sigaction child_handle;
-
-/*
- * So that the global handler knows that we can initialize an output.
- * Rather than just store it for when we have all of our globals.
- *
- * Since wayland is asynchronous we may get our outputs before we're ready for
- * them.
- */
-static int ready = 0;
-
+static char *fifo_path;
+static struct wl_list monitors; // struct Monitor*
+static struct zxdg_output_manager_v1 *output_manager;
 static const struct wl_registry_listener registry_listener = {
-    .global = onGlobalAdd,
-    .global_remove = onGlobalRemove,
+    .global = registry_global_add,
+    .global_remove = registry_global_remove,
 };
-
-static const struct xdg_wm_base_listener xdg_wm_base_listener = {
-    .ping = ping,
-};
-
-/* So that we can get the monitor names to match with dwl monitor names. */
+static int running = 0;
+static struct wl_list seats; // struct Seat*
+static int self_pipe[2];
+struct zwlr_layer_shell_v1 *shell;
+struct wl_shm *shm;
 static const struct zxdg_output_v1_listener xdg_output_listener = {
-    .name = name,
+    .name = xdg_output_name,
+};
+static const struct xdg_wm_base_listener xdg_wm_base_listener = {
+    .ping = xdg_wm_base_ping,
 };
 
-static const struct wl_pointer_listener pointer_listener = {
-    .enter  = enter,
-    .leave  = leave,
-    .motion = motion,
-    .button = button,
-    .frame  = frame,
-
-    .axis = axis,
-    .axis_discrete = axis_discrete,
-    .axis_source = axis_source,
-    .axis_stop = axis_stop,
-};
-
-static const struct wl_seat_listener seat_listener = {
-    .capabilities = capabilites,
-    .name = seat_name,
-};
-
-void enter(void *data, wl_pointer *pointer, uint32_t serial,
-           wl_surface *surface, wl_fixed_t x, wl_fixed_t y) {
-  Seat seat = *(Seat*)data;
-  seat.pointer->focused_monitor = monitor_from_surface(surface);
-
-  if (!cursor_image) {
-    wl_cursor_theme *theme = wl_cursor_theme_load(NULL, 24, shm);
-    cursor_image = wl_cursor_theme_get_cursor(theme, "left_ptr")->images[0];
-    cursor_surface = wl_compositor_create_surface(compositor);
-    wl_surface_attach(cursor_surface, wl_cursor_image_get_buffer(cursor_image), 0, 0);
-    wl_surface_commit(cursor_surface);
-  }
-
-  wl_pointer_set_cursor(pointer, serial, cursor_surface,
-                        cursor_image->hotspot_x, cursor_image->hotspot_y);
+void check_global(void *global, const char *name) {
+    if (global)
+        return;
+    panic("Wayland compositor did not export: %s", name);
 }
 
-void leave(void* data, wl_pointer* pointer, uint32_t serial, wl_surface* surface) {
-  Seat seat = *(Seat*)data;
-  seat.pointer->focused_monitor = NULL;
-}
-
-void motion(void* data, wl_pointer* pointer, uint32_t time, wl_fixed_t x, wl_fixed_t y) {
-  Seat seat = *(Seat*)data;
-  seat.pointer->x = wl_fixed_to_int(x);
-  seat.pointer->y = wl_fixed_to_int(y);
-}
-
-void button(void *data, wl_pointer *pointer, uint32_t serial, uint32_t time,
-            uint32_t button, uint32_t state) {
-  Seat seat = *(Seat*)data;
-  uint32_t* new_buttons = NULL;
-  int i, prev = -1; /* The index of this button */
-
-  for (i = 0; i < seat.pointer->size; i++) {
-    if (seat.pointer->buttons[i] == button)
-      prev = i;
-  }
-
-  /* If this button was newly pressed. */
-  if (state == WL_POINTER_BUTTON_STATE_PRESSED && prev == -1) {
-    new_buttons = ecalloc(seat.pointer->size+1, sizeof(uint32_t));
-    for (i = 0; i < seat.pointer->size+1; i++) {
-      if (i == seat.pointer->size) {
-        new_buttons[i] = button;
-        break;
-      }
-
-      new_buttons[i] = seat.pointer->buttons[i];
-    }
-
-    seat.pointer->size++;
-  }
-
-  /* If this button was released and we have it. */
-  if(state == WL_KEYBOARD_KEY_STATE_RELEASED && prev != -1) {
-    new_buttons = ecalloc(seat.pointer->size-1, sizeof(uint32_t));
-    for (i = 0; i < seat.pointer->size; i++) {
-      if (i == prev)
-        continue;
-
-      if (i < prev)
-        new_buttons[i] = seat.pointer->buttons[i];
-
-      if (i > prev)
-        new_buttons[i-1] = seat.pointer->buttons[i];
-    }
-
-    seat.pointer->size--;
-  }
-
-  free(seat.pointer->buttons);
-  seat.pointer->buttons = new_buttons;
-  return;
-}
-
-void frame(void* data, wl_pointer* pointer) {
-  Seat seat = *(Seat*)data;
-  Monitor* monitor = seat.pointer->focused_monitor;
-  if (!monitor)
-    return;
-
-  for (int i = 0; i < seat.pointer->size; i++)
-    bar_click(monitor->bar, monitor, seat.pointer->x, seat.pointer->y, seat.pointer->buttons[i]);
-
-  free(seat.pointer->buttons);
-  seat.pointer->buttons = NULL;
-  seat.pointer->size = 0;
-}
-
-void capabilites(void* data, wl_seat* wl_seat, uint32_t capabilities) {
-  Seat* seat = data;
-  int has_pointer = capabilities & WL_SEAT_CAPABILITY_POINTER;
-  if (!seat->pointer && has_pointer) {
-    seat->pointer = ecalloc(1, sizeof(Pointer));
-    seat->pointer->pointer = wl_seat_get_pointer(wl_seat);
-    seat->pointer->buttons = NULL;
-    seat->pointer->size = 0;
-    wl_pointer_add_listener(seat->pointer->pointer, &pointer_listener, seat);
-    return;
-  }
-
-  if (seat->pointer && !has_pointer) {
-    wl_pointer_release(seat->pointer->pointer);
-    seat->pointer->focused_monitor = NULL;
-    if (seat->pointer->buttons)
-      free(seat->pointer->buttons);
-
-    free(seat->pointer);
-  }
-}
-
-void name(void *data, zxdg_output_v1 *xdg_output, const char *name) {
-  Monitor *monitor = data;
-  monitor->xdg_name = strdup(name);
-  zxdg_output_v1_destroy(xdg_output);
-}
-
-void ping(void *data, struct xdg_wm_base *xdg_wm_base, uint32_t serial) {
-  xdg_wm_base_pong(base, serial);
-}
-
-int regHandle(void **store, HandleGlobal helper, const wl_interface *interface,
-              int version) {
-  if (strcmp(helper.interface_str, interface->name) != EQUAL)
-    return 0;
-
-  *store = wl_registry_bind(helper.registry, helper.name, interface, version);
-  return 1;
-}
-
-void onGlobalAdd(void *_, wl_registry *registry, uint32_t name,
-                 const char *interface, uint32_t version) {
-
-  HandleGlobal helper = {registry, name, interface};
-  if (regHandle((void **)&compositor, helper, &wl_compositor_interface, 4))
-    return;
-  if (regHandle((void **)&shm, helper, &wl_shm_interface, 1))
-    return;
-  if (regHandle((void **)&output_manager, helper, &zxdg_output_manager_v1_interface, 3))
-    return;
-  if (regHandle((void **)&shell, helper, &zwlr_layer_shell_v1_interface, 4))
-    return;
-  if (regHandle((void **)&base, helper, &xdg_wm_base_interface, 2)) {
-    xdg_wm_base_add_listener(base, &xdg_wm_base_listener, NULL);
-    return;
-  }
-
-  {
-    wl_output *output;
-    if (regHandle((void **)&output, helper, &wl_output_interface, 1)) {
-      if (ready) {
-        monitorSetup(name, output);
-      } else {
-        uninitOutput *uninit = ecalloc(1, sizeof(uninitOutput));
-        uninit->output = output;
-        uninit->name = name;
-        wl_list_insert(&uninitializedOutputs, &uninit->link);
-      }
-      return;
-    }
-  }
-
-  {
-    wl_seat* seat;
-    if (regHandle((void**)&seat, helper, &wl_seat_interface, 7)) {
-      Seat* seat_ = ecalloc(1, sizeof(*seat_));
-      seat_->seat = seat;
-      seat_->registry_name = name;
-      wl_list_insert(&seats, &seat_->link);
-      wl_seat_add_listener(seat, &seat_listener, seat_);
-      return;
-    }
-  }
-}
-
-void onGlobalRemove(void *_, wl_registry *registry, uint32_t name) {
-  /* Deconstruct a monitor when it disappears */
-  Monitor *current_monitor, *tmp_monitor;
-  wl_list_for_each_safe(current_monitor, tmp_monitor, &monitors, link) {
-    if (current_monitor->registry_name == name) {
-      wl_list_remove(&current_monitor->link);
-      bar_destroy(current_monitor->bar);
-    }
-  }
-
-  /* Deconstruct seat when it disappears */
-  Seat *seat, *tmp_seat;
-  wl_list_for_each_safe(seat, tmp_seat, &seats, link) {
-    if (seat->registry_name == name) {
-      seat->pointer->focused_monitor = NULL;
-      wl_pointer_release(seat->pointer->pointer);
-      wl_list_remove(&seat->link);
-      free(seat->pointer->buttons);
-      free(seat->pointer);
-      free(seat);
-    }
-  }
-}
-
-void spawn(Monitor* monitor, const Arg *arg) {
-  if (fork() != 0)
-    return;
-
-  char* const* argv = arg->v;
-  setsid();
-  execvp(argv[0], argv);
-  fprintf(stderr, "bar: execvp %s", argv[0]);
-  perror(" failed\n");
-  exit(1);
-}
-
-void checkGlobal(void *global, const char *name) {
-  if (global)
-    return;
-  fprintf(stderr, "Wayland server did not export %s\n", name);
-  cleanup();
-  exit(1);
-}
-
-/*
- * We just check and make sure we have our needed globals if any fail then we
- * exit.
- */
-void globalChecks() {
-  checkGlobal(compositor, "wl_compositor");
-  checkGlobal(shm, "wl_shm");
-  checkGlobal(base, "xdg_wm_base");
-  checkGlobal(shell, "wlr_layer_shell");
-  checkGlobal(output_manager, "zxdg_output_manager");
-
-  ready = 1;
-}
-
-void monitorSetup(uint32_t name, wl_output *output) {
-  Monitor *monitor = ecalloc(1, sizeof(*monitor));
-
-  monitor->bar = bar_create();
-  monitor->output = output;
-  monitor->registry_name = name;
-
-  wl_list_insert(&monitors, &monitor->link);
-
-  // So we can get the monitor name.
-  zxdg_output_v1 *xdg_output = zxdg_output_manager_v1_get_xdg_output(output_manager, output);
-  zxdg_output_v1_add_listener(xdg_output, &xdg_output_listener, monitor);
-}
-
-void set_cloexec(int fd) {
-  int flags = fcntl(fd, F_GETFD);
-  if (flags == -1)
-    die("FD_GETFD");
-  if (fcntl(fd, flags | FD_CLOEXEC) < 0)
-    die("FDD_SETFD");
-}
-
-void sighandler(int _) {
-  if (write(self_pipe[1], "0", 1) < 0)
-    die("sighandler");
-}
-
-void flush(void) {
-  wl_display_dispatch_pending(display);
-  if (wl_display_flush(display) < 0 && errno == EAGAIN) {
-    for (int i = 0; i < POLLFDS; i++) {
-      struct pollfd *poll = &pollfds[i];
-      if (poll->fd == wl_display_fd)
-        poll->events |= POLLOUT;
-    }
-  }
-}
-
-void setupFifo(void) {
-  int result, fd, i;
-  char *runtime_path = getenv("XDG_RUNTIME_DIR"), *file_name, *path;
-
-  for (i = 0; i < 100; i++) {
-    file_name = ecalloc(12, sizeof(*file_name));
-    sprintf(file_name, "/dwl-bar-%d", i);
-
-    path = ecalloc(strlen(runtime_path)+strlen(file_name)+1, sizeof(char));
-    strcat(path, runtime_path);
-    strcat(path, file_name);
-    free(file_name);
-
-    result = mkfifo(path, 0666);
-    if (result < 0) {
-      if (errno != EEXIST)
-        die("mkfifo");
-
-      free(path);
-      continue;
-    }
-
-    if ((fd = open(path, O_CLOEXEC | O_RDONLY | O_NONBLOCK)) < 0)
-      die("open fifo");
-
-    fifo_path = path;
-    fifo_fd = fd;
-
-    return;
-  }
-
-  die("setup fifo"); /* If we get here then we couldn't setup the fifo */
-}
-
-void update_monitor(Monitor* monitor) {
-  if (!bar_is_visible(monitor->bar)) {
-    bar_show(monitor->bar, monitor->output);
-    return;
-  }
-
-  bar_invalidate(monitor->bar);
-  return;
-}
-
-Monitor* monitor_from_name(char* name) {
-  Monitor* monitor;
-  wl_list_for_each(monitor, &monitors, link) {
-    if (strcmp(name, monitor->xdg_name) == EQUAL)
-      return monitor;
-  }
-
-  return NULL;
-}
-
-Monitor* monitor_from_surface(wl_surface* surface) {
-  Monitor* monitor;
-  wl_list_for_each(monitor, &monitors, link) {
-    if (surface == bar_get_surface(monitor->bar))
-      return monitor;
-  }
-
-  return NULL;
-}
-
-/*
- * Parse and extract a substring based on a delimiter
- * start_end is a ulong that we will use to base our starting location.
- * Then replace as the end point to be used later on.
- */
-char* to_delimiter(char* string, ulong *start_end, char delimiter) {
-  char* output;
-  ulong i, len = strlen(string);
-
-  if (*start_end > len)
-    return NULL;
-
-  for ( i = *start_end; i < len; i++ ) {
-    if (string[i] == delimiter) // We've reached the delimiter or the end.
-      break;
-  }
-
-  /* Create and copy the substring what we need */
-  output = strncpy(ecalloc(i - *start_end, sizeof(*output)),
-                   string + *start_end, i - *start_end);
-
-  output[i - *start_end] = '\0'; // null terminate
-  *start_end = i+1;
-
-  return output;
-}
-
-/* The `getline` from stdio.h wasn't working so I've made my own. */
-char* get_line(int fd) {
-  char *output, buffer[512], character;
-  int i = 0, r = i;
-
-  while ((r = read(fd, &character, 1)) > 0 && i < 512) {
-    buffer[i] = character;
-    i++;
-
-    if (character == '\n')
-      break;
-  }
-
-  /* Checking for edge cases */
-  if ((r == 0 && i == 0) || (i == 1 && buffer[i] == '\n'))
-    return NULL;
-
-  buffer[i] = '\0';
-  output = strncpy(ecalloc(i, sizeof(char)), buffer, i*sizeof(char));
-
-  return output;
-}
-
-void on_stdin(void) {
-  while (1) {
-    char *buffer = get_line(STDIN_FILENO);
-    if (!buffer || !strlen(buffer)) {
-        if (buffer)
-            free(buffer);
-      return;
-    }
-
-    handle_stdin(buffer);
-    free(buffer);
-  }
-}
-
-void handle_stdin(char* line) {
-  char *name, *command;
-  Monitor* monitor;
-  ulong loc = 0; /* Keep track of where we are in the string `line` */
-
-  name = to_delimiter(line, &loc, ' ');
-  command = to_delimiter(line, &loc, ' ');
-  monitor = monitor_from_name(name);
-  if (!monitor)
-    return;
-  free(name);
-
-  // Hate the way these if statements look. Is being this explicit worth it?
-  if (strcmp(command, "title") == EQUAL) {
-    if (line[strlen(line)-2] == ' ') {
-      bar_set_title(monitor->bar, "");
-      goto done;
-    }
-
-    char* title = to_delimiter(line, &loc, '\n');
-    bar_set_title(monitor->bar, title);
-    free(title);
-
-  } else if (strcmp(command, "appid") == EQUAL) {
-      /* Do nothing */
-  } else if (strcmp(command, "floating") == EQUAL) {
-    if (line[strlen(line)-2] == ' ') {
-      bar_set_floating(monitor->bar, 0);
-      goto done;
-    }
-
-    char* is_floating = to_delimiter(line, &loc, '\n');
-    strcmp(is_floating, "1") == EQUAL ? bar_set_floating(monitor->bar, 1) : bar_set_floating(monitor->bar, 0);
-    free(is_floating);
-
-  } else if (strcmp(command, "fullscreen") == EQUAL) {
-    /* Do nothing */
-  } else if (strcmp(command, "selmon") == EQUAL) {
-    char* selmon = to_delimiter(line, &loc, '\n');
-    strcmp(selmon, "1") == EQUAL ? bar_set_active(monitor->bar, 1) : bar_set_active(monitor->bar, 0);
-    free(selmon);
-
-  } else if (strcmp(command, "tags") == EQUAL) {
-    char *occupied_, *tags__, *clients_, *urgent_;
-    int occupied, tags_, clients, urgent, i, tag_mask;
-
-    occupied_ = to_delimiter(line, &loc, ' ');
-    tags__    = to_delimiter(line, &loc, ' ');
-    clients_  = to_delimiter(line, &loc, ' ');
-    urgent_  = to_delimiter(line,  &loc, '\n');
-
-    occupied = atoi(occupied_);
-    tags_    = atoi(tags__);
-    clients  = atoi(clients_);
-    urgent   = atoi(urgent_);
-
-    for(i = 0; i < LENGTH(tags); i++) {
-      int state = TAG_INACTIVE;
-      tag_mask = 1 << i;
-
-      if (tags_ & tag_mask)
-        state |= TAG_ACTIVE;
-      if (urgent & tag_mask)
-        state |= TAG_URGENT;
-
-      bar_set_tag(monitor->bar, i, state, occupied & tag_mask ? 1: 0, clients & tag_mask ? 1 : 0);
-    }
-
-    free(occupied_);
-    free(tags__);
-    free(clients_);
-    free(urgent_);
-
-  } else if (strcmp(command, "layout") == EQUAL) {
-    char* layout = to_delimiter(line, &loc, '\n');
-    bar_set_layout(monitor->bar, layout);
-    free(layout);
-  } else {
-      /* TODO: Find a good way to tell the user a command wasn't recognized. Or just do nothing? */
-  }
-
-  done:
-  free(command);
-  update_monitor(monitor);
-}
-
-void on_status(void) {
-  while (1) {
-    char *line = get_line(fifo_fd), *command, *status;
-    ulong loc = 0;
-    if (!line || !strlen(line)) {
-      if (line)
-        free(line);
-      return;
-    }
-
-    command = to_delimiter(line, &loc, ' ');
-    status  = to_delimiter(line, &loc, '\n');
-
-    if (strcmp(command, "status") != EQUAL)
-      goto done;
-
-    Monitor *current_monitor;
-    wl_list_for_each(current_monitor, &monitors, link) {
-        bar_set_status(current_monitor->bar, status);
-        update_monitor(current_monitor);
-    }
-
-
-    done:
-    free(line);
-    free(command);
-    free(status);
-  }
-}
-
-void setup(void) {
-  if (pipe(self_pipe) < 0)
-    die("pipe");
-
-  set_cloexec(self_pipe[0]);
-  set_cloexec(self_pipe[1]);
-
-  sighandle.sa_handler = &sighandler;
-  child_handle.sa_handler = SIG_IGN;
-
-  if (sigaction(SIGTERM, &sighandle, NULL) < 0 ||
-      sigaction(SIGINT, &sighandle, NULL) < 0 ||
-      sigaction(SIGCHLD, &child_handle, NULL) < 0)
-    die("sigaction");
-
-  display = wl_display_connect(NULL);
-  if (!display)
-    die("Failed to connect to a Wayland display.");
-  wl_display_fd = wl_display_get_fd(display);
-
-  wl_list_init(&seats);
-  wl_list_init(&monitors);
-  wl_list_init(&uninitializedOutputs);
-
-  wl_registry *registry = wl_display_get_registry(display);
-  wl_registry_add_listener(registry, &registry_listener, NULL);
-  wl_display_roundtrip(display);
-
-  setupFifo();
-
-  globalChecks(); /* Make sure we're ready to start the rest of the program */
-
-  wl_display_roundtrip(display);
-
-  // Initalize any outputs we got from registry. Then free the outputs.
-  uninitOutput *output, *tmp;
-  wl_list_for_each_safe(output, tmp, &uninitializedOutputs, link) {
-    monitorSetup(output->name, output->output);
-    wl_list_remove(&output->link);
-    free(output);
-  }
-
-  wl_display_roundtrip(display);
-
-  pollfds = ecalloc(POLLFDS, sizeof(*pollfds));
-
-  pollfds[0] = (pollfd) {STDIN_FILENO, POLLIN};
-  pollfds[1] = (pollfd) {wl_display_fd, POLLIN};
-  pollfds[2] = (pollfd) {self_pipe[0], POLLIN};
-  pollfds[3] = (pollfd) {fifo_fd, POLLIN};
-
-  if (fcntl(STDIN_FILENO, F_SETFL, O_NONBLOCK) < 0)
-    die("O_NONBLOCK");
-}
-
-void run(void) {
-  struct pollfd *pollfd;
-  int i, quitting = 0;
-
-  while (!quitting) {
-    flush();
-    if (poll(pollfds, POLLFDS, -1) < 0 && errno != EINTR)
-        die("poll");
-
-    for (i = 0; i < POLLFDS; i++) {
-      pollfd = &pollfds[i];
-      if (pollfd->revents & POLLNVAL)
-        die("POLLNVAL");
-
-      if (pollfd->fd == wl_display_fd) {
-        if ((pollfd->revents & POLLIN) && (wl_display_dispatch(display) < 0))
-          die("wl_display_dispatch");
-
-        if (pollfd->revents & POLLOUT) {
-          pollfd->events = POLLIN;
-          flush();
-        }
-      } else if (pollfd->fd == STDIN_FILENO && (pollfd->revents & POLLIN)) {
-        on_stdin();
-      } else if (pollfd->fd == fifo_fd      && (pollfd->revents & POLLIN)) {
-        on_status();
-      } else if (pollfd->fd == self_pipe[0] && (pollfd->revents & POLLIN)) {
-        quitting = 1;
-      }
-    }
-  }
+void check_globals(void) {
+    check_global(base, "xdg_wm_base");
+    check_global(compositor, "wl_compositor");
+    check_global(output_manager, "zxdg_output_manager_v1");
+    check_global(shell, "zwlr_layer_shell_v1");
+    check_global(shm, "wl_shm");
 }
 
 void cleanup(void) {
-  if (shm)
-    wl_shm_destroy(shm);
-  if (compositor)
-    wl_compositor_destroy(compositor);
-  if (base)
     xdg_wm_base_destroy(base);
-  if (shell)
-    zwlr_layer_shell_v1_destroy(shell);
-  if (output_manager)
-    zxdg_output_manager_v1_destroy(output_manager);
-  if (fifo_fd)
+    wl_compositor_destroy(compositor);
     close(fifo_fd);
-  if (fifo_path) {
     unlink(fifo_path);
     free(fifo_path);
-  }
-  if (display)
+    zxdg_output_manager_v1_destroy(output_manager);
+    zwlr_layer_shell_v1_destroy(shell);
+    wl_shm_destroy(shm);
+    events_destroy(events);
+    log_destroy();
+
+    struct Monitor *monitor, *tmp_monitor;
+    wl_list_for_each_safe(monitor, tmp_monitor, &monitors, link)
+        monitor_destroy(monitor);
+
+    struct Seat *seat, *tmp_seat;
+    wl_list_for_each_safe(seat, tmp_seat, &seats, link)
+        seat_destroy(seat);
+
     wl_display_disconnect(display);
 }
 
-int main(int argc, char *argv[]) {
-  int opt; // Just char for parsing args
-  while ((opt = getopt(argc, argv, "vh")) != -1) {
-    switch (opt) {
-    case 'h':
-      printf("Usage: %s [-h] [-v]\n", argv[0]);
-      printf("  -h: show this\n");
-      printf("  -v: get version\n");
-      exit(0);
-
-    case 'v':
-      printf("dwl %f", VERSION);
-      exit(0);
+void display_in(int fd, short mask, void *data) {
+    if (mask & (POLLHUP | POLLERR) ||
+            wl_display_dispatch(display) == -1) {
+        running = 0;
+        return;
     }
-  }
-
-  setup();
-  run();
-  cleanup();
-
-  return 0;
 }
 
-void die(const char *fmt, ...) {
-  va_list ap;
-  va_start(ap, fmt);
-  fprintf(stderr, "[dwl-bar] error: ");
-  vfprintf(stderr, fmt, ap);
-  va_end(ap);
+void fifo_handle(const char *line) {
+    char *command;
+    unsigned long loc = 0;
 
-  if (fmt[0] && fmt[strlen(fmt) - 1] == ':') {
-    fputc(' ', stderr);
-    perror(NULL);
+    command = to_delimiter(line, &loc, ' ');
 
-  } else {
-    fputc('\n', stderr);
-  }
-  fflush(stderr);
+    bar_log(LOG_INFO, "fifo_handle: command: '%s'", command);
 
-  cleanup();
-  exit(1);
+    if (STRING_EQUAL(command, "status")) {
+        char *status = to_delimiter(line, &loc, '\n');
+        bar_log(LOG_INFO, "fifo_handle: status: '%s'", status);
+        struct Monitor *pos;
+        wl_list_for_each(pos, &monitors, link) {
+            bar_set_status(pos->bar, status);
+            pipeline_invalidate(pos->pipeline);
+        }
+        free(status);
+    }
+
+    free(command);
 }
 
-void* ecalloc(size_t amnt, size_t size) {
-  void *p;
+void fifo_in(int fd, short mask, void *data) {
+    //bar_log(LOG_INFO, "fifo_in: start");
 
-  if (!(p = calloc(amnt, size)))
-    die("calloc did not allocate");
+    if (mask & POLLERR) {
+        bar_log(LOG_INFO, "fifo_in: POLLERR");
+        events_remove(events, fd);
+        char *default_status = string_create("dwl %.1f", VERSION);
+        struct Monitor *pos;
+        wl_list_for_each(pos, &monitors, link) {
+            bar_set_status(pos->bar, default_status);
+            pipeline_invalidate(pos->pipeline);
+        }
+        free(default_status);
+        return;
+    }
 
-  return p;
+    int new_fd = dup(fd);
+    FILE *fifo_file = fdopen(new_fd, "r");
+    char *buffer = NULL;
+    size_t size = 0;
+    while (1) {
+        if (getline(&buffer, &size, fifo_file) == -1) {
+            //bar_log(LOG_INFO, "fifo_in: breaking");
+            break;
+        }
+
+        //bar_log(LOG_INFO, "fifo_in: '%s'", buffer);
+        fifo_handle(buffer);
+    }
+    free(buffer);
+    fclose(fifo_file);
+    close(new_fd);
+
+    //bar_log(LOG_INFO, "fifo_in: done");
+}
+
+void fifo_setup(void) {
+  int result, i;
+  char *runtime_path = getenv("XDG_RUNTIME_DIR");
+
+  for (i = 0; i < 100; i++) {
+    fifo_path = string_create("%s/dwl-bar-%d", runtime_path, i);
+
+    result = mkfifo(fifo_path, 0666);
+    if (result < 0) {
+      if (errno != EEXIST)
+          panic("mkfifo");
+
+      continue;
+    }
+
+    if ((fifo_fd = open(fifo_path, O_CLOEXEC | O_RDONLY | O_NONBLOCK)) < 0)
+        panic("open fifo");
+
+    return;
+  }
+
+  panic("setup fifo"); /* If we get here then we couldn't setup the fifo */
+}
+
+void monitor_destroy(struct Monitor *monitor) {
+    if (!monitor)
+        return;
+
+    wl_list_remove(&monitor->link);
+    free(monitor->xdg_name);
+    wl_output_release(monitor->wl_output);
+    list_elements_destroy(monitor->hotspots, free);
+    pipeline_destroy(monitor->pipeline);
+    bar_destroy(monitor->bar);
+    free(monitor);
+}
+
+struct Monitor *monitor_from_name(const char *name) {
+    struct Monitor *pos;
+    wl_list_for_each(pos, &monitors, link) {
+        if (STRING_EQUAL(name, pos->xdg_name))
+            return pos;
+    }
+
+    return NULL;
+}
+
+struct Monitor *monitor_from_surface(const struct wl_surface *surface) {
+    struct Monitor *pos;
+    wl_list_for_each(pos, &monitors, link) {
+        if (pos->pipeline->surface == surface)
+            return pos;
+    }
+
+    return NULL;
+}
+
+void monitor_update(struct Monitor *monitor) {
+    if (!monitor)
+        return;
+
+    if (!pipeline_is_visible(monitor->pipeline)) {
+        pipeline_show(monitor->pipeline, monitor->wl_output);
+        return;
+    }
+
+    pipeline_invalidate(monitor->pipeline);
+}
+
+void pipe_in(int fd, short mask, void *data) {
+    running = 0;
+}
+
+void registry_global_add(void *data, struct wl_registry *registry, uint32_t name,
+                        const char *interface, uint32_t version) {
+    if (STRING_EQUAL(interface, wl_compositor_interface.name))
+        compositor = wl_registry_bind(registry, name, &wl_compositor_interface, 4);
+    else if (STRING_EQUAL(interface, wl_output_interface.name)) {
+        struct Monitor *monitor = ecalloc(1, sizeof(*monitor));
+        monitor->wl_output = wl_registry_bind(registry, name, &wl_output_interface, 1);
+        monitor->wl_name = name;
+        monitor->xdg_name = NULL;
+        monitor->xdg_output = NULL;
+        monitor->hotspots = list_create(1);
+        monitor->pipeline = pipeline_create();
+        monitor->bar = bar_create(monitor->hotspots, monitor->pipeline);
+
+        if (!monitor->pipeline || !monitor->bar)
+            return;
+
+        wl_list_insert(&monitors, &monitor->link);
+
+        if (!output_manager)
+            return;
+
+        monitor->xdg_output = zxdg_output_manager_v1_get_xdg_output(output_manager, monitor->wl_output);
+        zxdg_output_v1_add_listener(monitor->xdg_output, &xdg_output_listener, monitor);
+    }
+    else if (STRING_EQUAL(interface, wl_seat_interface.name)) {
+        struct Seat *seat = ecalloc(1, sizeof(*seat));
+        seat->seat = wl_registry_bind(registry, name, &wl_seat_interface, 5);
+        seat->wl_name = name;
+        seat->pointer = NULL;
+        seat->touch = NULL;
+        wl_list_insert(&seats, &seat->link);
+        wl_seat_add_listener(seat->seat, &seat_listener, seat);
+    }
+    else if (STRING_EQUAL(interface, wl_shm_interface.name))
+        shm = wl_registry_bind(registry, name, &wl_shm_interface, 1);
+    else if (STRING_EQUAL(interface, xdg_wm_base_interface.name)) {
+        base = wl_registry_bind(registry, name, &xdg_wm_base_interface, 2);
+        xdg_wm_base_add_listener(base, &xdg_wm_base_listener, NULL);
+    }
+    else if (STRING_EQUAL(interface, zxdg_output_manager_v1_interface.name)) {
+        output_manager = wl_registry_bind(registry, name, &zxdg_output_manager_v1_interface, 3);
+
+        struct Monitor *pos;
+        wl_list_for_each(pos, &monitors, link) {
+            // If the monitor is getting or has the xdg_name.
+            if (pos->xdg_output || pos->xdg_name)
+                continue;
+
+            pos->xdg_output = zxdg_output_manager_v1_get_xdg_output(output_manager, pos->wl_output);
+            zxdg_output_v1_add_listener(pos->xdg_output, &xdg_output_listener, pos);
+        }
+    }
+    else if (STRING_EQUAL(interface, zwlr_layer_shell_v1_interface.name))
+        shell = wl_registry_bind(registry, name, &zwlr_layer_shell_v1_interface, 4);
+}
+
+void registry_global_remove(void *data, struct wl_registry *registry, uint32_t name) {
+    struct Monitor *monitor, *tmp_monitor;
+    wl_list_for_each_safe(monitor, tmp_monitor, &monitors, link) {
+        if (monitor->wl_name != name) continue;
+        wl_list_remove(&monitor->link);
+        monitor_destroy(monitor);
+    }
+
+    struct Seat *seat, *tmp_seat;
+    wl_list_for_each_safe(seat, tmp_seat, &seats, link) {
+        if (seat->wl_name != name) continue;
+        wl_list_remove(&seat->link);
+        seat_destroy(seat);
+    }
+}
+
+void run(void) {
+    running = 1;
+
+    while (running) {
+        wl_display_dispatch_pending(display);
+        if (wl_display_flush(display) == -1 && errno != EAGAIN)
+            break;
+
+        events_poll(events);
+    }
+}
+
+void set_cloexec(int fd) {
+    int flags = fcntl(fd, F_GETFD);
+    if (flags == -1)
+        panic("F_GETFD");
+    if (fcntl(fd, F_SETFD, flags | FD_CLOEXEC) < 0)
+        panic("FD_SETFD");
+}
+
+void setup(void) {
+    if (pipe(self_pipe) == -1)
+        panic("pipe");
+
+    set_cloexec(self_pipe[0]);
+    set_cloexec(self_pipe[1]);
+
+    static struct sigaction sighandle;
+    static struct sigaction child_sigaction;
+
+    sighandle.sa_handler = &sigaction_handler;
+    child_sigaction.sa_handler = SIG_IGN;
+
+    if (sigaction(SIGTERM, &sighandle, NULL) < 0)
+        panic("sigaction SIGTERM");
+    if (sigaction(SIGINT, &sighandle, NULL) < 0)
+        panic("sigaction SIGINT");
+    if (sigaction(SIGCHLD, &child_sigaction, NULL) < 0)
+        panic("sigaction SIGCHLD");
+
+    display = wl_display_connect(NULL);
+    if (!display)
+        panic("Failed to connect to Wayland compositor.");
+    display_fd = wl_display_get_fd(display);
+
+    wl_list_init(&seats);
+    wl_list_init(&monitors);
+
+    struct wl_registry *registry = wl_display_get_registry(display);
+    wl_registry_add_listener(registry, &registry_listener, NULL);
+    wl_display_roundtrip(display);
+
+    fifo_setup();
+
+    check_globals();
+
+    wl_display_roundtrip(display);
+
+    if (fcntl(STDIN_FILENO, F_SETFL, O_NONBLOCK) < 0)
+        panic("STDIN_FILENO O_NONBLOCK");
+
+    events = events_create();
+    events_add(events, display_fd, POLLIN, NULL, display_in);
+    events_add(events, self_pipe[0], POLLIN, NULL, pipe_in);
+    events_add(events, STDIN_FILENO, POLLIN, NULL, stdin_in);
+    events_add(events, fifo_fd, POLLIN, NULL, fifo_in);
+}
+
+void stdin_handle(const char *line) {
+    if (!line)
+        return;
+
+    char *name, *command;
+    struct Monitor *monitor;
+    unsigned long loc = 0; /* Keep track of where we are in the string `line` */
+
+    name = to_delimiter(line, &loc, ' ');
+    command = to_delimiter(line, &loc, ' ');
+    monitor = monitor_from_name(name);
+    if (!monitor) {
+        free(name);
+        free(command);
+        return;
+    }
+    free(name);
+
+    if (STRING_EQUAL(command, "title")) {
+        char *title = to_delimiter(line, &loc, '\n');
+        if (*title == '\0') {
+            bar_set_title(monitor->bar, "");
+        } else
+            bar_set_title(monitor->bar, title);
+        free(title);
+    } else if (STRING_EQUAL(command, "appid")) {
+        /* Do nothing */
+    } else if (STRING_EQUAL(command, "floating")) {
+        char *is_floating = to_delimiter(line, &loc, '\n');
+        if (*is_floating == '1')
+            bar_set_floating(monitor->bar, 1);
+        else
+            bar_set_floating(monitor->bar, 0);
+        free(is_floating);
+    } else if (STRING_EQUAL(command, "fullscreen")) {
+        /* Do nothing */
+    } else if (STRING_EQUAL(command, "selmon")) {
+        char *selmon = to_delimiter(line, &loc, '\n');
+        if (*selmon == '1')
+            bar_set_active(monitor->bar, 1);
+        else
+            bar_set_active(monitor->bar, 0);
+        free(selmon);
+    } else if (STRING_EQUAL(command, "tags")) {
+        char *occupied_str, *tags_str, *clients_str, *urgent_str;
+        int occupied, _tags, clients, urgent, i, tag_mask, state;
+
+        occupied_str = to_delimiter(line, &loc, ' ');
+        tags_str    = to_delimiter(line, &loc, ' ');
+        clients_str = to_delimiter(line, &loc, ' ');
+        urgent_str  = to_delimiter(line, &loc, ' ');
+
+        occupied = atoi(occupied_str);
+        _tags    = atoi(tags_str);
+        clients  = atoi(clients_str);
+        urgent   = atoi(urgent_str);
+
+        for (i = 0; i < LENGTH(tags); i++) {
+            state    = Tag_None;
+            tag_mask = 1 << i;
+
+            if (_tags & tag_mask)
+                state |= Tag_Active;
+            if (urgent & tag_mask)
+                state |= Tag_Urgent;
+
+            bar_set_tag(monitor->bar, i, state, occupied & tag_mask ? 1 : 0, clients & tag_mask ? 1 : 0);
+        }
+
+        free(occupied_str);
+        free(tags_str);
+        free(clients_str);
+        free(urgent_str);
+    } else if (STRING_EQUAL(command, "layout")) {
+        char *layout = to_delimiter(line, &loc, '\n');
+        bar_set_layout(monitor->bar, layout);
+        free(layout);
+    }
+
+    free(command);
+    monitor_update(monitor);
+}
+
+void stdin_in(int fd, short mask, void *data) {
+    if (mask & (POLLHUP | POLLERR)) {
+        running = 0;
+        return;
+    }
+
+    int new_fd = dup(fd);
+    FILE *stdin_file = fdopen(new_fd, "r");
+    char *buffer = NULL;
+    size_t size = 0;
+    while(1) {
+         if (getline(&buffer, &size, stdin_file) == -1)
+            break;
+
+        stdin_handle(buffer);
+    }
+    free(buffer);
+    fclose(stdin_file);
+    close(new_fd);
+}
+
+void sigaction_handler(int _) {
+    if (write(self_pipe[1], "0", 1) < 0)
+        panic("sigaction_handler");
+}
+
+void xdg_output_name(void *data, struct zxdg_output_v1 *output, const char *name) {
+    struct Monitor *monitor = data;
+    monitor->xdg_name = strdup(name);
+    zxdg_output_v1_destroy(output);
+    monitor->xdg_output = NULL;
+}
+
+void xdg_wm_base_ping(void *data, struct xdg_wm_base *xdg_wm_base, uint32_t serial) {
+    xdg_wm_base_pong(xdg_wm_base, serial);
+}
+
+int main(int argc, char *argv[]) {
+    int opt;
+    while((opt = getopt(argc, argv, "l")) != -1) {
+        switch (opt) {
+            case 'l':
+                if (!setup_log())
+                    panic("Failed to setup logging");
+                break;
+            case 'h':
+                printf("Usage: %s [-h] [-v]\n", argv[0]);
+                exit(EXIT_SUCCESS);
+            case 'v':
+                printf("%s %.1f\n", argv[0], VERSION);
+                exit(EXIT_SUCCESS);
+            case '?':
+                printf("Invalid Argument\n");
+                printf("Usage: %s [-h] [-v] [-l]\n", argv[0]);
+                exit(EXIT_FAILURE);
+        }
+    }
+
+    setup();
+    run();
+    cleanup();
+}
+
+void panic(const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    fprintf(stderr, "[dwl-bar] panic: ");
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
+    if (fmt[0] && fmt[strlen(fmt) - 1] == ':') {
+        fputc(' ', stderr);
+        perror(NULL);
+
+    } else {
+        fputc('\n', stderr);
+    }
+
+    cleanup();
+    exit(EXIT_FAILURE);
 }

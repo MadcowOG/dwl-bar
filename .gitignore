@@ -1,8 +1,6 @@
 .projectile
 dwl-bar
-bar
-run
 compile_flags.txt
-log.txt
+bar.log
 config.h
 *-protocol.*

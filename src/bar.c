@@ -1,231 +1,232 @@
-#include <stdint.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <string.h>
-#include <unistd.h>
-#include <wayland-client-protocol.h>
-
-#include <pango-1.0/pango/pangocairo.h>
-
-#include "config.h"
 #include "bar.h"
-#include "common.h"
-#include "pango/pango-font.h"
+#include "cairo.h"
+#include "config.def.h"
+#include "config.h"
+#include "input.h"
+#include "main.h"
+#include "pango/pango-item.h"
 #include "pango/pango-layout.h"
-#include "shm.h"
-#include "wlr-layer-shell-unstable-v1-protocol.h"
-#include "xdg-shell-protocol.h"
+#include "render.h"
+#include "user.h"
+#include "util.h"
+#include "log.h"
+#include "pango/pango.h"
+#include <unistd.h>
 
-#define ELIPSES 3
+static void bar_click(struct Monitor *monitor, void *data, uint32_t button, double x, double y);
+static int bar_component_add_elipses(struct BasicComponent *component, struct Pipeline *pipeline, int limit);
+static struct BasicComponent *bar_component_create(struct Pipeline *pipeline);
+static int bar_component_width(struct BasicComponent *component, struct Pipeline *pipeline);
+static void bar_bounds(void *data, double *x, double *y, double *width, double *height);
+static enum Clicked bar_get_location(struct Bar *bar, double x, double y, int *tag_index);
+static void bar_layout_render(struct Pipeline *pipeline, struct Bar *bar, cairo_t *painter, int *x, int *y);
+static void bar_render(struct Pipeline *pipeline, void *data, cairo_t *painter, int *x, int *y);
+static void bar_tags_render(struct Pipeline *pipeline, struct Bar *bar, cairo_t *painter, int *x, int *y);
+static void bar_title_render(struct Pipeline *pipeline, struct Bar *bar, cairo_t *painter, int *x, int *y);
+static void bar_status_render(struct Pipeline *pipeline, struct Bar *bar, cairo_t *painter, int *x, int *y);
+static int bar_width(struct Pipeline *pipeline, void *data, unsigned int future_widths);
 
-typedef struct Font {
-    PangoFontDescription* description;
+const struct PipelineListener bar_pipeline_listener = { .render = bar_render, .width = bar_width, };
 
-    uint height; /* This is also the same as lrpad from dwm. */
-    uint approx_width;
-} Font;
+void bar_click(struct Monitor *monitor, void *data, uint32_t button, double x, double y) {
+    if (!monitor || !data)
+        return;
 
-typedef struct BarComponent {
-    PangoLayout* layout;
-    int x; /* Right bound of box */
-} BarComponent;
+    struct Bar *bar = data;
+    const struct Binding *binding;
+    union Arg *argp = NULL, arg;
+    int tag_index = -1;
+    enum Clicked clicked = bar_get_location(bar, x, y, &tag_index);
 
-typedef struct {
-    uint occupied;
-    uint focusedClient; /* If the tag has a focused client */
-    uint state;
-    BarComponent component;
-} Tag;
-
-struct Bar {
-    BarComponent layout, title, status;
-    Tag tags[9];
-
-    PangoContext* context;
-
-    /* Colors */
-    int background[4], foreground[4];
-
-    uint invalid; /* So we don't redraw twice. */
-    uint active; /* If this bar is on the active monitor */
-    uint floating; /* If the focused client is floating */
-
-    wl_surface* surface;
-    zwlr_layer_surface_v1* layer_surface;
-
-    Shm* shm;
-};
-
-static void add_elipses(PangoLayout *layout, int current_size);
-static void layerSurface(void* data, zwlr_layer_surface_v1*, uint32_t serial, uint32_t width, uint32_t height);
-static void frame(void* data, wl_callback* callback, uint32_t callback_data);
-static void bar_render(Bar* bar);
-static void bar_tags_render(Bar* bar, cairo_t* painter, int* x);
-static void bar_layout_render(Bar* bar, cairo_t* painter, int* x);
-static void bar_title_render(Bar* bar, cairo_t* painter, int* x);
-static void bar_status_render(Bar* bar, cairo_t* painter, int* x);
-static void bar_set_colorscheme(Bar* bar, const int** scheme);
-static void set_color(cairo_t* painter, const int rgba[4]);
-static void bar_color_background(Bar* bar, cairo_t* painter);
-static void bar_color_foreground(Bar* bar, cairo_t* painter);
-static Font getFont(void);
-static BarComponent bar_component_create(PangoContext* context, PangoFontDescription* description);
-static void bar_component_render(Bar* bar, BarComponent* component, cairo_t* painter, uint width, int* x);
-static int bar_component_width(BarComponent* component);
-
-static Font bar_font = {NULL, 0};
-
-// So that the compositor can tell us when it's a good time to render again.
-const wl_callback_listener frameListener = {.done = frame};
-
-// So that wlroots can tell us we need to resize.
-// We really only need to worry about this when the bar is visible (sometimes it isn't).
-const zwlr_layer_surface_v1_listener layerSurfaceListener = {.configure = layerSurface};
-
-void layerSurface(void* data, zwlr_layer_surface_v1* _, uint32_t serial, uint32_t width, uint32_t height) {
-    Bar* bar = data;
-    zwlr_layer_surface_v1_ack_configure(bar->layer_surface, serial);
-
-    if (bar->shm) {
-        if (bar->shm->width == width && bar->shm->height)
-          return;
-        shm_destroy(bar->shm);
+    if (clicked == Click_Tag) {
+        arg.ui = tag_index;
+        argp = &arg;
     }
 
-    bar->shm = shm_create(width, height, WL_SHM_FORMAT_XRGB8888);
-    bar_render(bar);
-}
+    for (int i = 0; i < LENGTH(bindings); i++) {
+        binding = &bindings[i];
+        if (clicked != binding->clicked || button != binding->button)
+            continue;
 
-void frame(void* data, wl_callback* callback, uint32_t callback_data) {
-    Bar* bar = data;
-    bar_render(bar);
-    wl_callback_destroy(callback);
-}
-
-Font getFont(void) {
-    PangoFontMap* map = pango_cairo_font_map_get_default();
-    if (!map)
-        die("font map");
-
-    PangoFontDescription* desc = pango_font_description_from_string(font);
-    if (!desc)
-        die("font description");
-
-    PangoContext* context = pango_font_map_create_context(map);
-    if (!context)
-        die("temp context");
-
-    PangoFont* fnt = pango_font_map_load_font(map, context, desc);
-    if (!fnt)
-        die("font load");
-
-    PangoFontMetrics* metrics = pango_font_get_metrics(fnt, pango_language_get_default());
-    if (!metrics)
-        die("font metrics");
-
-    Font in = {
-        desc,
-        PANGO_PIXELS(pango_font_metrics_get_height(metrics)),
-        PANGO_PIXELS(pango_font_metrics_get_approximate_char_width(metrics))
-    };
-
-    pango_font_metrics_unref(metrics);
-    g_object_unref(fnt);
-    g_object_unref(context);
-
-    return in;
-}
-
-void add_elipses(PangoLayout *layout, int current_size) {
-    const char *str = pango_layout_get_text(layout);
-    char *new_str;
-    int i = 0;
-
-    for (i = strlen(str); (((i+ELIPSES)*bar_font.approx_width)+bar_font.height > current_size
-                && i >= 0); i--);
-
-    if (i <= 0) {
-        pango_layout_set_text(layout, "", -1);
-    } else {
-        new_str       = ecalloc(i+ELIPSES+1, sizeof(char));
-        new_str       = strncpy(new_str, str, i*sizeof(char));
-        new_str[i+1]  = '\0';
-        new_str       = strcat(new_str, "...");
-
-        pango_layout_set_text(layout, new_str, -1);
-        free(new_str);
+        binding->callback(monitor, (argp && !binding->bypass) ? argp : &binding->arg);
     }
 }
 
-BarComponent bar_component_create(PangoContext* context, PangoFontDescription* description) {
-    PangoLayout* layout = pango_layout_new(context);
-    pango_layout_set_font_description(layout, description);
+int bar_component_add_elipses(struct BasicComponent *component, struct Pipeline *pipeline, int limit) {
+    const char *current_string = pango_layout_get_text(component->layout);
+    char *new_string;
+    const int elipses_amnt = 3;
+    int i;
 
-    return (BarComponent){ layout, 0 };
+    for (i = strlen(current_string);
+            (((i+elipses_amnt)*pipeline->font->approx_width)+pipeline->font->height > limit && i >= 0);
+            i--);
+
+    if (i <= 0)
+        return 0;
+
+    new_string = strncpy(ecalloc(i+elipses_amnt+1, sizeof(*new_string)),
+            current_string, i);
+    new_string[i+1] = '\0';
+    new_string = strcat(new_string, "...");
+
+    pango_layout_set_text(component->layout, new_string, -1);
+    free(new_string);
+    return bar_component_width(component, pipeline);
 }
 
-int bar_component_width(BarComponent* component) {
-    int w;
-    pango_layout_get_size(component->layout, &w, NULL);
-    return PANGO_PIXELS(w);
+struct BasicComponent *bar_component_create(struct Pipeline *pipeline) {
+    if (!pipeline)
+        return NULL;
+
+    struct BasicComponent *component = basic_component_create(pipeline->context, pipeline->font->description);
+    component->tx = pipeline->font->height/2.0;
+    component->ty = 1;
+    return component;
 }
 
-void bar_set_colorscheme(Bar* bar, const int** scheme) {
-    for (int i = 0; i < 4; i++) {
-        bar->foreground[i] = scheme[0][i];
-        bar->background[i] = scheme[1][i];
+int bar_component_width(struct BasicComponent *component, struct Pipeline *pipeline) {
+    return basic_component_text_width(component) + pipeline->font->height;
+}
+
+void bar_bounds(void *data, double *x, double *y, double *width, double *height) {
+    struct Bar *bar = data;
+    int bar_width = 0;
+    struct Tag *tag;
+    for (int i = 0; i < LENGTH(tags); i++) {
+        tag = &bar->tags[i];
+        bar_width += tag->component->width;
     }
+    bar_width += bar->layout->width;
+    bar_width += bar->title->width;
+    bar_width += bar->status->width;
+
+    *x = bar->x;
+    *y = bar->y;
+    *width = bar_width;
+    *height = bar->pipeline->shm->height;
 }
 
-void set_color(cairo_t* painter, const int rgba[4]) {
-    cairo_set_source_rgba(painter, rgba[0]/255.0, rgba[1]/255.0, rgba[2]/255.0, rgba[3]/255.0);
-}
+enum Clicked bar_get_location(struct Bar *bar, double x, double y, int *tag_index) {
+    enum Clicked clicked = Click_None;
+    struct Tag *tag;
 
-void bar_color_background(Bar* bar, cairo_t* painter) {
-    set_color(painter, bar->background);
-}
-
-void bar_color_foreground(Bar* bar, cairo_t* painter) {
-    set_color(painter, bar->foreground);
-}
-
-void bar_component_render(Bar* bar, BarComponent* component, cairo_t* painter, uint width, int* x) {
-    pango_cairo_update_layout(painter, component->layout);
-    component->x = *x+width;
-
-    bar_color_background(bar, painter);
-    cairo_rectangle(painter, *x, 0, width, bar->shm->height);
-    cairo_fill(painter);
-
-    bar_color_foreground(bar, painter);
-    cairo_move_to(painter, *x+(bar_font.height/2.0), 1);
-    pango_cairo_show_layout(painter, component->layout);
-}
-
-void bar_tags_render(Bar* bar, cairo_t* painter, int* x) {
-    for ( int i = 0; i < LENGTH(bar->tags); i++ ){
-        Tag* tag = &bar->tags[i];
-        uint tagWidth = bar_component_width(&tag->component) + bar_font.height;
-
-        /* Creating the tag */
-        if (tag->state & TAG_ACTIVE) {
-            bar_set_colorscheme(bar, schemes[Active_Scheme]);
-        } else if (tag->state & TAG_URGENT) {
-            bar_set_colorscheme(bar, schemes[Urgent_Scheme]);
-        } else {
-            bar_set_colorscheme(bar, schemes[InActive_Scheme]);
+    for (int i = 0; i < LENGTH(tags); i++) {
+        tag = &bar->tags[i];
+        if (basic_component_is_clicked(tag->component, x, y)) {
+            clicked = Click_Tag;
+            *tag_index = i;
+            return clicked;
         }
+    }
 
-        bar_component_render(bar, &tag->component, painter, tagWidth, x);
+    if (basic_component_is_clicked(bar->layout, x, y))
+        clicked = Click_Layout;
+    else if (basic_component_is_clicked(bar->title, x, y))
+        clicked = Click_Title;
+    else if (basic_component_is_clicked(bar->status, x, y))
+        clicked = Click_Status;
+
+    return clicked;
+}
+
+struct Bar *bar_create(struct List *hotspots, struct Pipeline *pipeline) {
+    if (!pipeline)
+        return NULL;
+
+    struct Bar *bar = ecalloc(1, sizeof(*bar));
+    bar->pipeline = pipeline;
+    bar->title = bar_component_create(pipeline);
+    bar->layout = bar_component_create(pipeline);
+    bar->status = bar_component_create(pipeline);
+
+    char *status = string_create("dwl %.1f", VERSION);
+    pango_layout_set_text(bar->status->layout, status, strlen(status));
+    free(status);
+
+    for (int i = 0; i < LENGTH(tags); i++) {
+        struct Tag *tag = &bar->tags[i];
+        *tag = (struct Tag){ 0, 0, 0,
+            bar_component_create(pipeline) };
+        pango_layout_set_text(bar->tags[i].component->layout, tags[i], strlen(tags[i]));
+        tag->component->width = basic_component_text_width(tag->component) + pipeline->font->height;
+    }
+
+    pipeline_add(pipeline, &bar_pipeline_listener, bar);
+    struct Hotspot *hotspot = list_add(hotspots, ecalloc(1, sizeof(*hotspot)));
+    hotspot->click = bar_click;
+    hotspot->bounds = bar_bounds;
+    hotspot->data = bar;
+
+    bar->x = 0;
+    bar->y = 0;
+
+    return bar;
+}
+
+void bar_destroy(struct Bar *bar) {
+    if (!bar) return;
+
+    basic_component_destroy(bar->title);
+    basic_component_destroy(bar->layout);
+    basic_component_destroy(bar->status);
+    for (int i = 0; i < LENGTH(tags); i++) {
+        struct Tag *tag = &bar->tags[i];
+        basic_component_destroy(tag->component);
+    }
+    free(bar);
+}
+
+void bar_layout_render(struct Pipeline *pipeline, struct Bar *bar, cairo_t *painter, int *x, int *y) {
+    if (!bar || !pipeline)
+        return;
+
+    bar->layout->width = bar_component_width(bar->layout, pipeline);
+    bar->layout->height = pipeline->shm->height;
+    pipeline_set_colorscheme(pipeline, schemes[InActive_Scheme]);
+    basic_component_render(bar->layout, pipeline, painter, x, y);
+
+    *x += bar->layout->width;
+}
+
+void bar_render(struct Pipeline *pipeline, void *data, cairo_t *painter, int *x, int *y) {
+    if (!pipeline || !data)
+        return;
+
+    struct Bar *bar = data;
+    bar->x = *x;
+    bar->y = *y;
+    bar_tags_render(pipeline, bar, painter, x, y);
+    bar_layout_render(pipeline, bar, painter, x, y);
+    bar_title_render(pipeline, bar, painter, x, y);
+    bar_status_render(pipeline, bar, painter, x, y);
+}
+
+void bar_tags_render(struct Pipeline *pipeline, struct Bar *bar, cairo_t *painter, int *x, int *y) {
+    if (!bar || !pipeline)
+        return;
+
+    for (int i = 0; i < LENGTH(tags); i++) {
+        struct Tag *tag = &bar->tags[i];
+
+        if (tag->state & Tag_Active)
+            pipeline_set_colorscheme(pipeline, schemes[Active_Scheme]);
+        else if (tag->state & Tag_Urgent)
+            pipeline_set_colorscheme(pipeline, schemes[Urgent_Scheme]);
+        else
+            pipeline_set_colorscheme(pipeline, schemes[InActive_Scheme]);
+
+        tag->component->height = pipeline->shm->height;
+        basic_component_render(tag->component, pipeline, painter, x, y);
 
         if (!tag->occupied)
             goto done;
 
         /*  Creating the occupied tag box */
-        int boxHeight = bar_font.height / 9,
-            boxWidth  = bar_font.height / 6 + 1;
+        int boxHeight = pipeline->font->height / 9,
+            boxWidth  = pipeline->font->height / 6 + 1;
 
-        if (tag->focusedClient) {
+        if (tag->has_focused) {
           cairo_rectangle(painter, *x + boxHeight, boxHeight, boxWidth, boxWidth);
           cairo_fill(painter);
         } else {
@@ -234,54 +235,33 @@ void bar_tags_render(Bar* bar, cairo_t* painter, int* x) {
           cairo_stroke(painter);
         }
 
-        done:
-        *x += tagWidth;
+done:
+        *x += tag->component->width;
     }
 }
 
-void bar_layout_render(Bar* bar, cairo_t* painter, int* x) {
-    if (!bar)
+void bar_title_render(struct Pipeline *pipeline, struct Bar *bar, cairo_t *painter, int *x, int *y) {
+    if (!bar || !pipeline)
         return;
 
-    uint layoutWidth = bar_component_width(&bar->layout) + bar_font.height;
+    if (bar->active)
+        pipeline_set_colorscheme(pipeline, schemes[Active_Scheme]);
+    else
+        pipeline_set_colorscheme(pipeline, schemes[InActive_Scheme]);
 
-    bar_set_colorscheme(bar, schemes[InActive_Scheme]);
-    bar_component_render(bar, &bar->layout, painter, layoutWidth, x);
+    bar->title->width = pipeline->shm->width - *x - bar_component_width(bar->status, pipeline) - pipeline_get_future_widths(pipeline);
+    bar->title->height = pipeline->shm->height;
 
-    *x += layoutWidth;
-}
+    if (bar_component_width(bar->title, pipeline) > bar->title->width)
+        bar->title->width = bar_component_width(bar->title, pipeline);
 
-void bar_title_render(Bar* bar, cairo_t* painter, int* x) {
-    if (!bar)
-        return;
-
-    // @HUH: For some reason ww - x - (status width) works, but ww - x - status width doesn't?
-    int titleWidth = bar->shm->width - bar->layout.x - (bar_component_width(&bar->status) + bar_font.height);
-
-    /* If the status is larger than the title
-     * or
-     * a character can't fit in the title.
-     * Hopefully this helps avoid situations where the title is empty
-     * and renders but wouldn't if it had text.
-     */
-    if (titleWidth < 0 || bar_font.approx_width+bar_font.height > titleWidth)
-        return;
-
-    /* If not all text fills the title component
-     * Then fit as much as possible.
-     */
-    if ((bar_component_width(&bar->title) + bar_font.height) > titleWidth)
-        add_elipses(bar->title.layout, titleWidth);
-
-    bar->active ? bar_set_colorscheme(bar, schemes[Active_Scheme]) : bar_set_colorscheme(bar, schemes[InActive_Scheme]);
-
-    bar_component_render(bar, &bar->title, painter, titleWidth, x);
+    basic_component_render(bar->title, pipeline, painter, x, y);
 
     if (!bar->floating)
         goto done;
 
-    int boxHeight = bar_font.height / 9,
-        boxWidth  = bar_font.height / 6 + 1;
+    int boxHeight = pipeline->font->height / 9,
+        boxWidth  = pipeline->font->height / 6 + 1;
 
     set_color(painter, grey3);
     cairo_rectangle(painter, *x + boxHeight + 0.5, boxHeight + 0.5, boxWidth, boxWidth);
@@ -289,224 +269,108 @@ void bar_title_render(Bar* bar, cairo_t* painter, int* x) {
     cairo_stroke(painter);
 
     done:
-    *x += titleWidth;
+    *x += bar->title->width;
 }
 
-void bar_status_render(Bar* bar, cairo_t* painter, int* x) {
-    if (!bar)
+void bar_status_render(struct Pipeline *pipeline, struct Bar *bar, cairo_t *painter, int *x, int *y) {
+    if (!bar || !pipeline)
         return;
 
-    uint statusWidth = bar_component_width(&bar->status) + bar_font.height;
+    char *previous_status = NULL;
 
-    // If the status is as large or larger than the layout then fit as much as we can.
-    if (statusWidth > (bar->shm->width - bar->layout.x))
-        add_elipses(bar->status.layout, (bar->shm->width - bar->layout.x));
-
-    bar_set_colorscheme(bar, schemes[InActive_Scheme]);
+    pipeline_set_colorscheme(pipeline, schemes[InActive_Scheme]);
     if (!bar->active && status_on_active)
-        bar_set_colorscheme(bar, (const int*[4]){ grey1, grey1 } );
+        pipeline_set_colorscheme(pipeline, (const int *[4]){ grey1, grey1 });
 
-    bar_component_render(bar, &bar->status, painter, statusWidth, x);
-}
+    bar->status->width = bar_component_width(bar->status, pipeline);
+    bar->status->height = pipeline->shm->height;
 
-void bar_render(Bar* bar) {
-    if (!bar || !bar->shm)
-        return;
-
-    int x = 0; /* Keep track of the cairo cursor */
-    cairo_surface_t* image = cairo_image_surface_create_for_data(shm_data(bar->shm),
-                                                                 CAIRO_FORMAT_ARGB32,
-                                                                 bar->shm->width,
-                                                                 bar->shm->height,
-                                                                 bar->shm->stride);
-
-    cairo_t* painter = cairo_create(image);
-    pango_cairo_update_context(painter, bar->context);
-
-    bar_tags_render(bar, painter, &x);
-    bar_layout_render(bar, painter, &x);
-    bar_title_render(bar, painter, &x);
-    bar_status_render(bar, painter, &x);
-
-    wl_surface_attach(bar->surface, shm_buffer(bar->shm), 0, 0);
-    wl_surface_damage(bar->surface, 0, 0, bar->shm->width, bar->shm->height);
-    wl_surface_commit(bar->surface);
-
-    cairo_destroy(painter);
-    cairo_surface_destroy(image);
-
-    shm_flip(bar->shm);
-    bar->invalid = 0;
-}
-
-Bar* bar_create(void) {
-    Bar* bar = ecalloc(1, sizeof(*bar));
-    bar->invalid = 0;
-    bar->active = 0;
-    bar->floating = 0;
-
-    bar->context = pango_font_map_create_context(pango_cairo_font_map_get_default());
-    if (!bar->context)
-        die("pango context");
-
-    if (!bar_font.description)
-        bar_font = getFont();
-
-    bar->layout = bar_component_create(bar->context, bar_font.description);
-    bar->title  = bar_component_create(bar->context, bar_font.description);
-    bar->status = bar_component_create(bar->context, bar_font.description);
-
-    /* Default status */
-    char* status = ecalloc(8, sizeof(*status));
-    snprintf(status, 8, "dwl %.1f", VERSION);
-    pango_layout_set_text(bar->status.layout, status, strlen(status));
-    free(status);
-
-    for (int i = 0; i < LENGTH(tags); i++) {
-        BarComponent component = bar_component_create(bar->context, bar_font.description);
-        pango_layout_set_text(component.layout, tags[i], strlen(tags[i]));
-        Tag tag = { 0, 0, 0, component };
-        bar->tags[i] = tag;
+    if (bar->status->width > (pipeline->shm->width - *x - pipeline_get_future_widths(pipeline))) {
+        previous_status = strdup(pango_layout_get_text(bar->status->layout));
+        bar->status->width = bar_component_add_elipses(bar->status, pipeline,
+                (pipeline->shm->width - *x - pipeline_get_future_widths(pipeline)));
+        if (bar->status->width == 0) {
+            free(previous_status);
+            return;
+        }
     }
 
-    return bar;
-}
+    basic_component_render(bar->status, pipeline, painter, x, y);
 
-void bar_destroy(Bar* bar) {
-    uint i;
-    if ( !bar )
-        return;
-
-    if ( bar->shm )
-        shm_destroy(bar->shm);
-
-    if ( bar->surface )
-        wl_surface_destroy(bar->surface);
-
-    if ( bar->layer_surface )
-        zwlr_layer_surface_v1_destroy(bar->layer_surface);
-
-    if ( bar->context )
-        g_object_unref(bar->context);
-
-    if ( bar->layout.layout )
-        g_object_unref(bar->layout.layout);
-
-    if ( bar->status.layout )
-        g_object_unref(bar->status.layout);
-
-    if ( bar->title.layout )
-        g_object_unref(bar->title.layout);
-
-    for ( i = 0; i < LENGTH(tags); i++) {
-        Tag tag = bar->tags[i];
-        if (tag.component.layout)
-            g_object_unref(tag.component.layout);
+    if (previous_status) {
+        pango_layout_set_text(bar->status->layout, previous_status, -1);
+        free(previous_status);
     }
 
-    return free(bar);
+    *x += bar->status->width;
 }
 
-// When we need to redraw the bar, because of new information or changes.
-// We don't just redraw the bar immediately, we will wait for the compositor to say it's ready.
-// This is only for if the bar is shown
-void bar_invalidate(Bar* bar) {
-    if ( !bar || bar->invalid || !bar_is_visible(bar))
-        return;
+void bar_set_active(struct Bar *bar, unsigned int is_active) {
+    if (!bar) return;
 
-    wl_callback* cb = wl_surface_frame(bar->surface);
-
-    wl_callback_add_listener(cb, &frameListener, bar);
-    wl_surface_commit(bar->surface);
-    bar->invalid = 1;
-}
-
-void bar_show(Bar* bar, wl_output* output) {
-    if (!bar || !output || bar_is_visible(bar))
-      return;
-
-    bar->surface = wl_compositor_create_surface(compositor);
-    bar->layer_surface = zwlr_layer_shell_v1_get_layer_surface(shell, bar->surface, output, ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM, "doom.dwl-bar");
-    zwlr_layer_surface_v1_add_listener(bar->layer_surface, &layerSurfaceListener, bar);
-
-    int anchor = bar_top ? ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP : ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM;
-    zwlr_layer_surface_v1_set_anchor(bar->layer_surface,
-                                     anchor | ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT | ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT);
-
-    int height = bar_font.height + 2;
-    zwlr_layer_surface_v1_set_size(bar->layer_surface, 0, height);
-    zwlr_layer_surface_v1_set_exclusive_zone(bar->layer_surface, height);
-    wl_surface_commit(bar->surface);
-
-}
-
-int bar_is_visible(Bar* bar) {
-    // This is dumb, but I don't know how else to do this.
-    // We do a negation to convert to boolean int.
-    // Then another negation to get the right boolean output.
-    // That is 1 when there is a surface, 0 when there isn't.
-    return !(!bar->surface);
-}
-
-void bar_set_layout(Bar *bar, const char* text) {
-    pango_layout_set_text(bar->layout.layout, text, strlen(text));
-}
-
-void bar_set_title(Bar *bar, const char* text) {
-    pango_layout_set_text(bar->title.layout, text, strlen(text));
-}
-
-void bar_set_status(Bar *bar, const char* text) {
-    pango_layout_set_text(bar->status.layout, text, strlen(text));
-}
-
-void bar_set_active(Bar* bar, uint is_active) {
     bar->active = is_active;
 }
 
-void bar_set_floating(Bar* bar, uint is_floating) {
+void bar_set_floating(struct Bar *bar, unsigned int is_floating) {
+    if (!bar) return;
+
     bar->floating = is_floating;
 }
 
-void bar_set_tag(Bar *bar, uint i, uint state, uint occupied, uint focusedClient) {
-    Tag* tag = &bar->tags[i];
-    tag->focusedClient = focusedClient;
+void bar_set_layout(struct Bar *bar, const char *text) {
+    if (!bar) return;
+
+    pango_layout_set_text(bar->layout->layout, text, -1);
+}
+
+void bar_set_status(struct Bar *bar, const char *text) {
+    if (!bar) return;
+
+    pango_layout_set_text(bar->status->layout, text, -1);
+}
+
+void bar_set_tag(struct Bar *bar, unsigned int index,
+        unsigned int state, unsigned int occupied, unsigned int has_focused) {
+    if (!bar) return;
+
+    if (!bar || index >= LENGTH(bar->tags) ) return;
+
+    struct Tag *tag = &bar->tags[index];
+    tag->has_focused = has_focused;
     tag->occupied = occupied;
     tag->state = state;
 }
 
-wl_surface* bar_get_surface(Bar *bar) {
-    return bar->surface;
+void bar_set_title(struct Bar *bar, const char *text) {
+    if (!bar) return;
+
+    pango_layout_set_text(bar->title->layout, text, -1);
 }
 
-void bar_click(Bar* bar, struct Monitor* monitor, int x, int y, uint32_t button) {
-    Arg *argp = NULL, arg;
-    Clicked location = Click_None;
+int bar_width(struct Pipeline *pipeline, void *data, unsigned int future_widths) {
+    if (!data || !pipeline) return 0;
 
-    if (x < bar->tags[LENGTH(bar->tags)-1].component.x) {
-        location = Click_Tag;
-        for (int i = 0; i < LENGTH(bar->tags); i++) {
-            if (x < bar->tags[i].component.x) {
-                arg.ui = 1<<i;
-                argp = &arg;
-                break;
-            }
-        }
-    } else if (x < bar->layout.x) {
-        location = Click_Layout;
-    } else if (x < bar->title.x) {
-        location = Click_Title;
-    } else {
-        location = Click_Status;
+    struct Bar *bar = data;
+    int width = 0, title_width, status_width;
+
+    for (int i = 0; i < LENGTH(tags); i++)
+        width += bar_component_width(bar->tags[i].component, pipeline);
+    width += bar_component_width(bar->layout, pipeline);
+
+    title_width = pipeline->shm->width - width - bar_component_width(bar->status, pipeline) - future_widths;
+    if (bar_component_width(bar->title, pipeline) > bar->title->width)
+        title_width = bar_component_width(bar->title, pipeline);
+    width += title_width;
+
+    status_width = bar_component_width(bar->status, pipeline);
+    if (status_width > (pipeline->shm->width - width - future_widths)) {
+        char *previous_status = strdup(pango_layout_get_text(bar->status->layout));
+        bar->status->width = bar_component_add_elipses(bar->status, pipeline,
+                (pipeline->shm->width - width - pipeline_get_future_widths(pipeline)));
+        pango_layout_set_text(bar->status->layout, previous_status, -1);
+        free(previous_status);
     }
+    width += status_width;
 
-    if (location == Click_None)
-        return;
-
-    for (int i = 0; i < LENGTH(buttons); i++) {
-        if (buttons[i].location == location && buttons[i].button == button) {
-            buttons[i].func(monitor, argp ? argp : &buttons[i].arg);
-            return;
-        }
-    }
+    return width;
 }
