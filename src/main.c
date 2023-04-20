@@ -125,11 +125,8 @@ void fifo_handle(const char *line) {
 
     command = to_delimiter(line, &loc, ' ');
 
-    bar_log(LOG_INFO, "fifo_handle: command: '%s'", command);
-
     if (STRING_EQUAL(command, "status")) {
         char *status = to_delimiter(line, &loc, '\n');
-        bar_log(LOG_INFO, "fifo_handle: status: '%s'", status);
         struct Monitor *pos;
         wl_list_for_each(pos, &monitors, link) {
             bar_set_status(pos->bar, status);
@@ -142,10 +139,7 @@ void fifo_handle(const char *line) {
 }
 
 void fifo_in(int fd, short mask, void *data) {
-    //bar_log(LOG_INFO, "fifo_in: start");
-
     if (mask & POLLERR) {
-        bar_log(LOG_INFO, "fifo_in: POLLERR");
         events_remove(events, fd);
         char *default_status = string_create("dwl %.1f", VERSION);
         struct Monitor *pos;
@@ -162,19 +156,15 @@ void fifo_in(int fd, short mask, void *data) {
     char *buffer = NULL;
     size_t size = 0;
     while (1) {
-        if (getline(&buffer, &size, fifo_file) == -1) {
-            //bar_log(LOG_INFO, "fifo_in: breaking");
+        if (getline(&buffer, &size, fifo_file) == -1)
             break;
-        }
 
-        //bar_log(LOG_INFO, "fifo_in: '%s'", buffer);
         fifo_handle(buffer);
     }
     free(buffer);
     fclose(fifo_file);
     close(new_fd);
 
-    //bar_log(LOG_INFO, "fifo_in: done");
 }
 
 void fifo_setup(void) {

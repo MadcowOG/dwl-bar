@@ -43,7 +43,6 @@ void basic_component_destroy(struct BasicComponent *component) {
 }
 
 int basic_component_is_clicked(struct BasicComponent *component, double x, double y) {
-    bar_log(LOG_INFO, "basic_component_is_clicked: %.1f x %.1f in %d x %d", x, y, component->x, component->x+component->width);
     return (x > component->x && y > component->y &&
             x < (component->x + component->width) && y < (component->y + component->height));
 }
