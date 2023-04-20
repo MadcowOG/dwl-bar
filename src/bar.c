@@ -113,6 +113,10 @@ enum Clicked bar_get_location(struct Bar *bar, double x, double y, int *tag_inde
 
     for (int i = 0; i < LENGTH(bar->tags); i++) {
         tag = &bar->tags[i];
+
+        if (!tag->occupied && !(tag->state & Tag_Active))
+            continue;
+
         if (basic_component_is_clicked(tag->component, x, y)) {
             clicked = Click_Tag;
             *tag_index = i;
@@ -212,6 +216,9 @@ void bar_tags_render(struct Pipeline *pipeline, struct Bar *bar, cairo_t *painte
     for (int i = 0; i < LENGTH(bar->tags); i++) {
         tag = &bar->tags[i];
 
+        if (!tag->occupied && !(tag->state & Tag_Active))
+            continue;
+
         if (tag->state & Tag_Active)
             pipeline_set_colorscheme(pipeline, schemes[Active_Scheme]);
         else if (tag->state & Tag_Urgent)
@@ -221,22 +228,6 @@ void bar_tags_render(struct Pipeline *pipeline, struct Bar *bar, cairo_t *painte
 
         tag->component->height = pipeline->shm->height;
         basic_component_render(tag->component, pipeline, painter, x, y);
-
-        if (!tag->occupied)
-            goto done;
-
-        /*  Creating the occupied tag box */
-        int boxHeight = pipeline->font->height / 9,
-            boxWidth  = pipeline->font->height / 6 + 1;
-
-        if (tag->has_focused) {
-            cairo_rectangle(painter, *x + boxHeight, boxHeight, boxWidth, boxWidth);
-            cairo_fill(painter);
-        } else {
-            cairo_rectangle(painter, *x + boxHeight + 0.5, boxHeight + 0.5, boxWidth, boxWidth);
-            cairo_set_line_width(painter, 1);
-            cairo_stroke(painter);
-        }
 
 done:
         *x += tag->component->width;
