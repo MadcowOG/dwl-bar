@@ -59,6 +59,7 @@ void pipeline_add(struct Pipeline *pipeline, const struct PipelineListener *list
 struct Pipeline *pipeline_create(void);
 void pipeline_destroy(struct Pipeline *pipeline);
 int pipeline_get_future_widths(struct Pipeline *pipeline);
+void pipeline_hide(struct Pipeline *pipeline);
 void pipeline_invalidate(struct Pipeline *pipeline);
 int pipeline_is_visible(struct Pipeline *pipeline);
 void pipeline_show(struct Pipeline *pipeline, struct wl_output *output);

@@ -161,6 +161,20 @@ int pipeline_get_future_widths(struct Pipeline *pipeline) {
     return width;
 }
 
+void pipeline_hide(struct Pipeline *pipeline) {
+    if (!pipeline || !pipeline_is_visible(pipeline))
+        return;
+
+
+    zwlr_layer_surface_v1_destroy(pipeline->layer_surface);
+    wl_surface_destroy(pipeline->surface);
+    shm_destroy(pipeline->shm);
+
+    pipeline->layer_surface = NULL;
+    pipeline->surface = NULL;
+    pipeline->shm = NULL;
+}
+
 void pipeline_invalidate(struct Pipeline *pipeline) {
     if (!pipeline || pipeline->invalid || !pipeline_is_visible(pipeline))
         return;
