@@ -209,7 +209,7 @@ void bar_tags_render(struct Pipeline *pipeline, struct Bar *bar, cairo_t *painte
         return;
 
     struct Tag *tag;
-    for (int i = 0; i < LENGTH(tags); i++) {
+    for (int i = 0; i < LENGTH(bar->tags); i++) {
         tag = &bar->tags[i];
 
         if (tag->state & Tag_Active)
