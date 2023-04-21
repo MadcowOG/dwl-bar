@@ -50,7 +50,7 @@ int list_cmp_find(struct List* list, const void *data, int compare(const void *l
         return -1;
 
     for (int i = 0; i < list->length; i++)
-        if (compare(data, list->data[i]))
+        if (compare(data, list->data[i]) == 0)
             return i;
 
     return -1;
