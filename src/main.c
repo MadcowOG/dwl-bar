@@ -257,12 +257,6 @@ void registry_global_add(void *data, struct wl_registry *registry, uint32_t name
         monitor->wl_name = name;
         monitor->xdg_name = NULL;
         monitor->xdg_output = NULL;
-        monitor->hotspots = list_create(1);
-        monitor->pipeline = pipeline_create();
-        monitor->bar = bar_create(monitor->hotspots, monitor->pipeline);
-
-        if (!monitor->pipeline || !monitor->bar)
-            return;
 
         wl_list_insert(&monitors, &monitor->link);
 
@@ -377,6 +371,15 @@ void setup(void) {
     check_globals();
 
     wl_display_roundtrip(display);
+
+    struct Monitor *monitor;
+    wl_list_for_each(monitor, &monitors, link) {
+        monitor->hotspots = list_create(1);
+        monitor->pipeline = pipeline_create();
+        monitor->bar = bar_create(monitor->hotspots, monitor->pipeline);
+        if (!monitor->pipeline || !monitor->bar)
+            panic("Failed to create a pipline or bar for monitor: %s", monitor->xdg_name);
+    }
 
     if (fcntl(STDIN_FILENO, F_SETFL, O_NONBLOCK) < 0)
         panic("STDIN_FILENO O_NONBLOCK");
