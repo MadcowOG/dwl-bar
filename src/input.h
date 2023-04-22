@@ -51,15 +51,18 @@ struct Seat {
     struct wl_list link;
 };
 
-struct Hotspot {
+struct HotspotListener {
     void (*click)(struct Monitor *monitor, void *data, uint32_t button, double x, double y);
     void (*bounds)(void *data, double *x, double *y, double *width, double *height);
+};
+
+struct Hotspot {
+    const struct HotspotListener *listener;
     void *data;
 };
 
 extern const struct wl_seat_listener seat_listener;
 
-void process_hotspots(struct Monitor* monitor, double x, double y, uint32_t button);
 void seat_destroy(struct Seat *seat);
 
 #endif // INPUT_H_

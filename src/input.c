@@ -15,6 +15,7 @@
 #include <wayland-util.h>
 
 static int button_cmp(const void *left, const void *right);
+static void hotspots_process(struct Monitor* monitor, double x, double y, uint32_t button);
 static void pointer_axis(void *data, struct wl_pointer *wl_pointer, uint32_t time, uint32_t axis, wl_fixed_t value);
 static void pointer_axis_discrete(void *data, struct wl_pointer *wl_pointer, uint32_t axis, int32_t discrete);
 static void pointer_axis_source(void *data, struct wl_pointer *wl_pointer, uint32_t axis_source);
@@ -158,7 +159,7 @@ void pointer_frame(void *data, struct wl_pointer *wl_pointer) {
     if (!monitor) return;
 
     for (int i = 0; i < pointer->buttons->length; i++)
-        process_hotspots(pointer->focused_monitor, pointer->x, pointer->y,
+        hotspots_process(pointer->focused_monitor, pointer->x, pointer->y,
                 *(uint32_t*)pointer->buttons->data[i]);
     list_elements_destroy(pointer->buttons, free);
     pointer->buttons = list_create(0);
@@ -173,14 +174,14 @@ void pointer_process_scroll(struct Pointer *pointer, unsigned int axis_index) {
     struct Axis *axis = &pointer->axis[axis_index];
     if (axis->discrete_steps) {
         for (int i = 0; i < axis->discrete_steps; i++)
-            process_hotspots(pointer->focused_monitor, pointer->x, pointer->y, wl_axis_to_button(axis_index, axis->value));
+            hotspots_process(pointer->focused_monitor, pointer->x, pointer->y, wl_axis_to_button(axis_index, axis->value));
     } else {
         while (abs(axis->value) > SCROLL_THRESHOLD) {
             if (axis->value > 0){
-                process_hotspots(pointer->focused_monitor, pointer->x, pointer->y, wl_axis_to_button(axis_index, SCROLL_THRESHOLD));
+                hotspots_process(pointer->focused_monitor, pointer->x, pointer->y, wl_axis_to_button(axis_index, SCROLL_THRESHOLD));
                 axis->value -= SCROLL_THRESHOLD;
             } else {
-                process_hotspots(pointer->focused_monitor, pointer->x, pointer->y, wl_axis_to_button(axis_index, -SCROLL_THRESHOLD));
+                hotspots_process(pointer->focused_monitor, pointer->x, pointer->y, wl_axis_to_button(axis_index, -SCROLL_THRESHOLD));
                 axis->value += SCROLL_THRESHOLD;
             }
         }
@@ -224,19 +225,19 @@ void pointer_update_cursor(struct Pointer *pointer) {
     wl_surface_commit(pointer->cursor_surface);
 }
 
-void process_hotspots(struct Monitor* monitor, double x, double y, uint32_t button) {
+void hotspots_process(struct Monitor* monitor, double x, double y, uint32_t button) {
     struct Hotspot *hotspot;
     for (int i = 0; i < monitor->hotspots->length; i++) {
         hotspot = monitor->hotspots->data[i];
 
         double hotspot_x = 0, hotspot_y = 0, hotspot_width = 0, hotspot_height = 0;
-        hotspot->bounds(hotspot->data, &hotspot_x, &hotspot_y, &hotspot_width, &hotspot_height);
+        hotspot->listener->bounds(hotspot->data, &hotspot_x, &hotspot_y, &hotspot_width, &hotspot_height);
 
         if (!( x > hotspot_x && y > hotspot_y &&
                     x < (hotspot_x+hotspot_width) && y < (hotspot_y+hotspot_height)))
             continue;
 
-        hotspot->click(monitor, hotspot->data, button, x, y);
+        hotspot->listener->click(monitor, hotspot->data, button, x, y);
         return;
     }
 }
@@ -389,7 +390,7 @@ void touch_up(void *data, struct wl_touch *wl_touch, uint32_t serial, uint32_t t
     if (!point) return;
 
     uint32_t button = touch_point_to_button(point, time);
-    process_hotspots(point->focused_monitor, point->x, point->y, button);
+    hotspots_process(point->focused_monitor, point->x, point->y, button);
 }
 
 uint32_t wl_axis_to_button(int axis, wl_fixed_t value) {

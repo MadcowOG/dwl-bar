@@ -27,6 +27,7 @@ static void bar_status_render(struct Pipeline *pipeline, struct Bar *bar, cairo_
 static int bar_width(struct Pipeline *pipeline, void *data, unsigned int future_widths);
 
 const struct PipelineListener bar_pipeline_listener = { .render = bar_render, .width = bar_width, };
+const struct HotspotListener bar_hotspot_listener = { .click = bar_click, .bounds = bar_bounds };
 
 void bar_click(struct Monitor *monitor, void *data, uint32_t button, double x, double y) {
     if (!monitor || !data)
@@ -155,8 +156,7 @@ struct Bar *bar_create(struct List *hotspots, struct Pipeline *pipeline) {
 
     pipeline_add(pipeline, &bar_pipeline_listener, bar);
     struct Hotspot *hotspot = list_add(hotspots, ecalloc(1, sizeof(*hotspot)));
-    hotspot->click = bar_click;
-    hotspot->bounds = bar_bounds;
+    hotspot->listener = &bar_hotspot_listener;
     hotspot->data = bar;
 
     bar->x = 0;
