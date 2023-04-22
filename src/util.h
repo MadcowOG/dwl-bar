@@ -6,7 +6,7 @@
 #include <wayland-util.h>
 
 #define STRING_EQUAL(string1, string2) strcmp(string1, string2) == 0
-#define STRINGN_EQUAL(string1, string2, n) strcmp(string1, string2, n) == 0
+#define STRINGN_EQUAL(string1, string2, n) strncmp(string1, string2, n) == 0
 #define LENGTH(X) (sizeof X / sizeof X[0] )
 
 struct List {
