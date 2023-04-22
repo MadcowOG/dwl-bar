@@ -22,6 +22,7 @@ struct Monitor {
 };
 
 void panic(const char *fmt, ...);
+void monitors_update(void);
 struct Monitor *monitor_from_surface(const struct wl_surface *surface);
 
 extern struct wl_compositor *compositor;

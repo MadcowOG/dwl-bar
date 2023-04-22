@@ -236,6 +236,13 @@ void monitor_update(struct Monitor *monitor) {
     pipeline_invalidate(monitor->pipeline);
 }
 
+void monitors_update(void) {
+    struct Monitor *monitor;
+    wl_list_for_each(monitor, &monitors, link) {
+        monitor_update(monitor);
+    }
+}
+
 void pipe_in(int fd, short mask, void *data) {
     running = 0;
 }
