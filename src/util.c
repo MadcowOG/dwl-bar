@@ -102,7 +102,7 @@ void list_resize(struct List *list) {
         return;
 
     list->allocated *= 2;
-    list->data = realloc(list->data, list->allocated);
+    list->data = realloc(list->data, sizeof(void*) * list->allocated);
 }
 
 char *string_create(const char *fmt, ...) {
