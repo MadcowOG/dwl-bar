@@ -18,7 +18,7 @@ struct Tag {
 struct Bar {
     struct Pipeline *pipeline;
     struct BasicComponent *layout, *title, *status;
-    struct Tag tags[LENGTH(tags)];
+    struct List *tags;
 
     unsigned int active, floating;
     unsigned int x, y;

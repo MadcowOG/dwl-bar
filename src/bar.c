@@ -1,6 +1,7 @@
 #include "bar.h"
 #include "cairo.h"
 #include "config.h"
+#include "dwl-ipc-unstable-v1-protocol.h"
 #include "input.h"
 #include "main.h"
 #include "pango/pango-item.h"
@@ -93,8 +94,8 @@ void bar_bounds(void *data, double *x, double *y, double *width, double *height)
     struct Bar *bar = data;
     int bar_width = 0;
     struct Tag *tag;
-    for (int i = 0; i < LENGTH(bar->tags); i++) {
-        tag = &bar->tags[i];
+    for (int i = 0; i < bar->tags->length; i++) {
+        tag = bar->tags->data[i];
         bar_width += tag->component->width;
     }
     bar_width += bar->layout->width;
@@ -111,8 +112,8 @@ enum Clicked bar_get_location(struct Bar *bar, double x, double y, int *tag_inde
     enum Clicked clicked = Click_None;
     struct Tag *tag;
 
-    for (int i = 0; i < LENGTH(bar->tags); i++) {
-        tag = &bar->tags[i];
+    for (int i = 0; i < bar->tags->length; i++) {
+        tag = bar->tags->data[i];
         if (basic_component_is_clicked(tag->component, x, y)) {
             clicked = Click_Tag;
             *tag_index = i;
@@ -144,12 +145,13 @@ struct Bar *bar_create(struct List *hotspots, struct Pipeline *pipeline) {
     pango_layout_set_text(bar->status->layout, status, strlen(status));
     free(status);
 
-    struct Tag *tag;
-    for (int i = 0; i < LENGTH(tags); i++) {
-        tag = &bar->tags[i];
+    bar->tags = list_create(tags->length);
+    for (int i = 0; i < tags->length; i++) {
+        struct Tag *tag = list_add(bar->tags, ecalloc(1, sizeof(*tag)));
+        const char *tag_str = tags->data[i];
         *tag = (struct Tag){ 0, 0, 0,
             bar_component_create(pipeline) };
-        pango_layout_set_text(tag->component->layout, tags[i], strlen(tags[i]));
+        pango_layout_set_text(tag->component->layout, tag_str, strlen(tag_str));
         tag->component->width = basic_component_text_width(tag->component) + pipeline->font->height;
     }
 
@@ -171,8 +173,8 @@ void bar_destroy(struct Bar *bar) {
     basic_component_destroy(bar->layout);
     basic_component_destroy(bar->status);
     struct Tag *tag;
-    for (int i = 0; i < LENGTH(bar->tags); i++) {
-        tag = &bar->tags[i];
+    for (int i = 0; i < bar->tags->length; i++) {
+        tag = bar->tags->data[i];
         basic_component_destroy(tag->component);
     }
     free(bar);
@@ -208,12 +210,11 @@ void bar_tags_render(struct Pipeline *pipeline, struct Bar *bar, cairo_t *painte
         return;
 
     struct Tag *tag;
-    for (int i = 0; i < LENGTH(bar->tags); i++) {
-        tag = &bar->tags[i];
-
-        if (tag->state & Tag_Active)
+    for (int i = 0; i < bar->tags->length; i++) {
+        tag = bar->tags->data[i];
+        if (tag->state & ZDWL_IPC_OUTPUT_V1_TAG_STATE_ACTIVE)
             pipeline_set_colorscheme(pipeline, schemes[Active_Scheme]);
-        else if (tag->state & Tag_Urgent)
+        else if (tag->state & ZDWL_IPC_OUTPUT_V1_TAG_STATE_URGENT)
             pipeline_set_colorscheme(pipeline, schemes[Urgent_Scheme]);
         else
             pipeline_set_colorscheme(pipeline, schemes[InActive_Scheme]);
@@ -335,9 +336,9 @@ void bar_set_tag(struct Bar *bar, unsigned int index,
         unsigned int state, unsigned int occupied, unsigned int has_focused) {
     if (!bar) return;
 
-    if (!bar || index >= LENGTH(bar->tags) ) return;
+    if (!bar || index >= bar->tags->length ) return;
 
-    struct Tag *tag = &bar->tags[index];
+    struct Tag *tag = bar->tags->data[index];
     tag->has_focused = has_focused;
     tag->occupied = occupied;
     tag->state = state;
@@ -355,8 +356,8 @@ int bar_width(struct Pipeline *pipeline, void *data, unsigned int future_widths)
     struct Bar *bar = data;
     int width = 0, title_width, status_width;
 
-    for (int i = 0; i < LENGTH(bar->tags); i++)
-        width += bar_component_width(bar->tags[i].component, pipeline);
+    for (int i = 0; i < bar->tags->length; i++)
+        width += bar_component_width(((struct Tag *)bar->tags->data[i])->component, pipeline);
     width += bar_component_width(bar->layout, pipeline);
 
     title_width = pipeline->shm->width - width - bar_component_width(bar->status, pipeline) - future_widths;

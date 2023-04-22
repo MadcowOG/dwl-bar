@@ -5,11 +5,13 @@
 #include "util.h"
 #include "main.h"
 #include "input.h"
-#include "xdg-output-unstable-v1-protocol.h"
+#include "config.h"
 #include "xdg-shell-protocol.h"
 #include "wlr-layer-shell-unstable-v1-protocol.h"
+#include "dwl-ipc-unstable-v1-protocol.h"
 #include <math.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <getopt.h>
 #include <stdio.h>
@@ -33,7 +35,6 @@ static void fifo_handle(const char *line);
 static void fifo_in(int fd, short mask, void *data);
 static void fifo_setup(void);
 static void monitor_destroy(struct Monitor *monitor);
-static struct Monitor *monitor_from_name(const char *name);
 struct Monitor *monitor_from_surface(const struct wl_surface *surface);
 static void monitor_initialize(struct Monitor *monitor);
 static void monitor_update(struct Monitor *monitor);
@@ -44,21 +45,31 @@ static void registry_global_remove(void *data, struct wl_registry *registry, uin
 static void run(void);
 static void set_cloexec(int fd);
 static void setup(void);
-static void stdin_handle(const char *line);
-static void stdin_in(int fd, short mask, void *data);
 static void sigaction_handler(int _);
-static void xdg_output_name(void *data, struct zxdg_output_v1 *output, const char *name);
 static void xdg_wm_base_ping(void *data, struct xdg_wm_base *xdg_wm_base, uint32_t serial);
+static void zdwl_manager_layout(void *data, struct zdwl_ipc_manager_v1 *zdwl_manager_v1, const char *name);
+static void zdwl_manager_tag(void *data, struct zdwl_ipc_manager_v1 *zdwl_manager_v1, const char *name);
+static void zdwl_output_active(void *data, struct zdwl_ipc_output_v1 *zdwl_ipc_output_v1, uint32_t active);
+static void zdwl_output_appid(void *data, struct zdwl_ipc_output_v1 *zdwl_ipc_output_v1, const char *appid);
+static void zdwl_output_floating(void *data, struct zdwl_ipc_output_v1 *zdwl_ipc_output_v1, uint32_t is_floating);
+static void zdwl_output_frame(void *data, struct zdwl_ipc_output_v1 *zdwl_ipc_output_v1);
+static void zdwl_output_fullscreen(void *data, struct zdwl_ipc_output_v1 *zdwl_ipc_output_v1, uint32_t is_fullscreen);
+static void zdwl_output_layout(void *data, struct zdwl_ipc_output_v1 *zdwl_ipc_output_v1, uint32_t layout);
+static void zdwl_output_layout_symbol(void *data, struct zdwl_ipc_output_v1 *zdwl_ipc_output_v1, const char *layout);
+static void zdwl_output_tag(void *data, struct zdwl_ipc_output_v1 *zdwl_ipc_output_v1, uint32_t tag, uint32_t state, uint32_t clients, uint32_t focused);
+static void zdwl_output_title(void *data, struct zdwl_ipc_output_v1 *zdwl_ipc_output_v1, const char *title);
+static void zdwl_output_toggle_visibility(void *data, struct zdwl_ipc_output_v1 *zdwl_ipc_output_v1);
 
 static struct xdg_wm_base *base;
 struct wl_compositor *compositor;
 static struct wl_display *display;
 static int display_fd;
+static struct zdwl_ipc_manager_v1 *dwl_manager = NULL;
 static struct Events *events;
 static int fifo_fd;
 static char *fifo_path;
+unsigned int layouts;
 static struct wl_list monitors; // struct Monitor*
-static struct zxdg_output_manager_v1 *output_manager;
 static const struct wl_registry_listener registry_listener = {
     .global = registry_global_add,
     .global_remove = registry_global_remove,
@@ -68,11 +79,25 @@ static struct wl_list seats; // struct Seat*
 static int self_pipe[2];
 struct zwlr_layer_shell_v1 *shell;
 struct wl_shm *shm;
-static const struct zxdg_output_v1_listener xdg_output_listener = {
-    .name = xdg_output_name,
-};
+struct List *tags; // char*
 static const struct xdg_wm_base_listener xdg_wm_base_listener = {
     .ping = xdg_wm_base_ping,
+};
+static const struct zdwl_ipc_manager_v1_listener zdwl_manager_listener = {
+    .layout = zdwl_manager_layout,
+    .tag = zdwl_manager_tag,
+};
+static const struct zdwl_ipc_output_v1_listener zdwl_output_listener = {
+    .active = zdwl_output_active,
+    .appid = zdwl_output_appid,
+    .floating = zdwl_output_floating,
+    .frame = zdwl_output_frame,
+    .fullscreen = zdwl_output_fullscreen,
+    .layout = zdwl_output_layout,
+    .layout_symbol = zdwl_output_layout_symbol,
+    .tag = zdwl_output_tag,
+    .title = zdwl_output_title,
+    .toggle_visibility = zdwl_output_toggle_visibility,
 };
 
 void check_global(void *global, const char *name) {
@@ -84,7 +109,7 @@ void check_global(void *global, const char *name) {
 void check_globals(void) {
     check_global(base, "xdg_wm_base");
     check_global(compositor, "wl_compositor");
-    check_global(output_manager, "zxdg_output_manager_v1");
+    check_global(dwl_manager, "zdwl_ipc_manager_v1");
     check_global(shell, "zwlr_layer_shell_v1");
     check_global(shm, "wl_shm");
 }
@@ -95,10 +120,11 @@ void cleanup(void) {
     close(fifo_fd);
     unlink(fifo_path);
     free(fifo_path);
-    zxdg_output_manager_v1_destroy(output_manager);
     zwlr_layer_shell_v1_destroy(shell);
     wl_shm_destroy(shm);
     events_destroy(events);
+    list_elements_destroy(tags, free);
+    zdwl_ipc_manager_v1_destroy(dwl_manager);
     log_destroy();
 
     struct Monitor *monitor, *tmp_monitor;
@@ -196,23 +222,13 @@ void monitor_destroy(struct Monitor *monitor) {
     if (!monitor)
         return;
 
-    free(monitor->xdg_name);
     if (wl_output_get_version(monitor->wl_output) >= WL_OUTPUT_RELEASE_SINCE_VERSION)
         wl_output_release(monitor->wl_output);
+    zdwl_ipc_output_v1_destroy(monitor->dwl_output);
     list_elements_destroy(monitor->hotspots, free);
     pipeline_destroy(monitor->pipeline);
     bar_destroy(monitor->bar);
     free(monitor);
-}
-
-struct Monitor *monitor_from_name(const char *name) {
-    struct Monitor *pos;
-    wl_list_for_each(pos, &monitors, link) {
-        if (STRING_EQUAL(name, pos->xdg_name))
-            return pos;
-    }
-
-    return NULL;
 }
 
 struct Monitor *monitor_from_surface(const struct wl_surface *surface) {
@@ -228,11 +244,13 @@ struct Monitor *monitor_from_surface(const struct wl_surface *surface) {
 void monitor_initialize(struct Monitor *monitor) {
     if (!monitor) return;
 
+    monitor->desired_visibiliy = show_bar;
+    monitor->layout = 0;
     monitor->hotspots = list_create(1);
     monitor->pipeline = pipeline_create();
     monitor->bar = bar_create(monitor->hotspots, monitor->pipeline);
     if (!monitor->pipeline || !monitor->bar)
-        panic("Failed to create a pipline or bar for monitor: %s", monitor->xdg_name);
+        panic("Failed to create a pipline or bar for monitor");
     monitor_update(monitor);
 }
 
@@ -240,7 +258,7 @@ void monitor_update(struct Monitor *monitor) {
     if (!monitor)
         return;
 
-    if (!pipeline_is_visible(monitor->pipeline)) {
+    if (!pipeline_is_visible(monitor->pipeline) && monitor->desired_visibiliy) {
         pipeline_show(monitor->pipeline, monitor->wl_output);
         return;
     }
@@ -267,16 +285,14 @@ void registry_global_add(void *data, struct wl_registry *registry, uint32_t name
         struct Monitor *monitor = ecalloc(1, sizeof(*monitor));
         monitor->wl_output = wl_registry_bind(registry, name, &wl_output_interface, 1);
         monitor->wl_name = name;
-        monitor->xdg_name = NULL;
-        monitor->xdg_output = NULL;
+        monitor->dwl_output = NULL;
 
         wl_list_insert(&monitors, &monitor->link);
 
-        if (!output_manager)
-            return;
+        if (!dwl_manager) return;
 
-        monitor->xdg_output = zxdg_output_manager_v1_get_xdg_output(output_manager, monitor->wl_output);
-        zxdg_output_v1_add_listener(monitor->xdg_output, &xdg_output_listener, monitor);
+        monitor->dwl_output = zdwl_ipc_manager_v1_get_output(dwl_manager, monitor->wl_output);
+        zdwl_ipc_output_v1_add_listener(monitor->dwl_output, &zdwl_output_listener, monitor);
 
         if (!running) return;
         monitor_initialize(monitor);
@@ -296,17 +312,16 @@ void registry_global_add(void *data, struct wl_registry *registry, uint32_t name
         base = wl_registry_bind(registry, name, &xdg_wm_base_interface, 2);
         xdg_wm_base_add_listener(base, &xdg_wm_base_listener, NULL);
     }
-    else if (STRING_EQUAL(interface, zxdg_output_manager_v1_interface.name)) {
-        output_manager = wl_registry_bind(registry, name, &zxdg_output_manager_v1_interface, 3);
+    else if (STRING_EQUAL(interface, zdwl_ipc_manager_v1_interface.name)) {
+        dwl_manager = wl_registry_bind(registry, name, &zdwl_ipc_manager_v1_interface, 4);
+        zdwl_ipc_manager_v1_add_listener(dwl_manager, &zdwl_manager_listener, NULL);
 
         struct Monitor *pos;
         wl_list_for_each(pos, &monitors, link) {
-            // If the monitor is getting or has the xdg_name.
-            if (pos->xdg_output || pos->xdg_name)
-                continue;
+            if (pos->dwl_output) continue;
 
-            pos->xdg_output = zxdg_output_manager_v1_get_xdg_output(output_manager, pos->wl_output);
-            zxdg_output_v1_add_listener(pos->xdg_output, &xdg_output_listener, pos);
+            pos->dwl_output = zdwl_ipc_manager_v1_get_output(dwl_manager, pos->wl_output);
+            zdwl_ipc_output_v1_add_listener(pos->dwl_output, &zdwl_output_listener, pos);
         }
     }
     else if (STRING_EQUAL(interface, zwlr_layer_shell_v1_interface.name))
@@ -369,13 +384,14 @@ void setup(void) {
     if (sigaction(SIGCHLD, &child_sigaction, NULL) < 0)
         panic("sigaction SIGCHLD");
 
-    display = wl_display_connect(NULL);
+    display = wl_display_connect("wayland-1");
     if (!display)
         panic("Failed to connect to Wayland compositor.");
     display_fd = wl_display_get_fd(display);
 
     wl_list_init(&seats);
     wl_list_init(&monitors);
+    tags = list_create(0);
 
     struct wl_registry *registry = wl_display_get_registry(display);
     wl_registry_add_listener(registry, &registry_listener, NULL);
@@ -398,112 +414,7 @@ void setup(void) {
     events = events_create();
     events_add(events, display_fd, POLLIN, NULL, display_in);
     events_add(events, self_pipe[0], POLLIN, NULL, pipe_in);
-    events_add(events, STDIN_FILENO, POLLIN, NULL, stdin_in);
     events_add(events, fifo_fd, POLLIN, NULL, fifo_in);
-}
-
-void stdin_handle(const char *line) {
-    if (!line)
-        return;
-
-    char *name, *command;
-    struct Monitor *monitor;
-    unsigned long loc = 0; /* Keep track of where we are in the string `line` */
-
-    name = to_delimiter(line, &loc, ' ');
-    command = to_delimiter(line, &loc, ' ');
-    monitor = monitor_from_name(name);
-    if (!monitor) {
-        free(name);
-        free(command);
-        return;
-    }
-    free(name);
-
-    if (STRING_EQUAL(command, "title")) {
-        char *title = to_delimiter(line, &loc, '\n');
-        if (*title == '\0') {
-            bar_set_title(monitor->bar, "");
-        } else
-            bar_set_title(monitor->bar, title);
-        free(title);
-    } else if (STRING_EQUAL(command, "appid")) {
-        /* Do nothing */
-    } else if (STRING_EQUAL(command, "floating")) {
-        char *is_floating = to_delimiter(line, &loc, '\n');
-        if (*is_floating == '1')
-            bar_set_floating(monitor->bar, 1);
-        else
-            bar_set_floating(monitor->bar, 0);
-        free(is_floating);
-    } else if (STRING_EQUAL(command, "fullscreen")) {
-        /* Do nothing */
-    } else if (STRING_EQUAL(command, "selmon")) {
-        char *selmon = to_delimiter(line, &loc, '\n');
-        if (*selmon == '1')
-            bar_set_active(monitor->bar, 1);
-        else
-            bar_set_active(monitor->bar, 0);
-        free(selmon);
-    } else if (STRING_EQUAL(command, "tags")) {
-        char *occupied_str, *tags_str, *clients_str, *urgent_str;
-        int occupied, _tags, clients, urgent, i, tag_mask, state;
-
-        occupied_str = to_delimiter(line, &loc, ' ');
-        tags_str    = to_delimiter(line, &loc, ' ');
-        clients_str = to_delimiter(line, &loc, ' ');
-        urgent_str  = to_delimiter(line, &loc, ' ');
-
-        occupied = atoi(occupied_str);
-        _tags    = atoi(tags_str);
-        clients  = atoi(clients_str);
-        urgent   = atoi(urgent_str);
-
-        for (i = 0; i < LENGTH(tags); i++) {
-            state    = Tag_None;
-            tag_mask = 1 << i;
-
-            if (_tags & tag_mask)
-                state |= Tag_Active;
-            if (urgent & tag_mask)
-                state |= Tag_Urgent;
-
-            bar_set_tag(monitor->bar, i, state, occupied & tag_mask ? 1 : 0, clients & tag_mask ? 1 : 0);
-        }
-
-        free(occupied_str);
-        free(tags_str);
-        free(clients_str);
-        free(urgent_str);
-    } else if (STRING_EQUAL(command, "layout")) {
-        char *layout = to_delimiter(line, &loc, '\n');
-        bar_set_layout(monitor->bar, layout);
-        free(layout);
-    }
-
-    free(command);
-    monitor_update(monitor);
-}
-
-void stdin_in(int fd, short mask, void *data) {
-    if (mask & (POLLHUP | POLLERR)) {
-        running = 0;
-        return;
-    }
-
-    int new_fd = dup(fd);
-    FILE *stdin_file = fdopen(new_fd, "r");
-    char *buffer = NULL;
-    size_t size = 0;
-    while(1) {
-         if (getline(&buffer, &size, stdin_file) == -1)
-            break;
-
-        stdin_handle(buffer);
-    }
-    free(buffer);
-    fclose(stdin_file);
-    close(new_fd);
 }
 
 void sigaction_handler(int _) {
@@ -511,15 +422,68 @@ void sigaction_handler(int _) {
         panic("sigaction_handler");
 }
 
-void xdg_output_name(void *data, struct zxdg_output_v1 *output, const char *name) {
-    struct Monitor *monitor = data;
-    monitor->xdg_name = strdup(name);
-    zxdg_output_v1_destroy(output);
-    monitor->xdg_output = NULL;
-}
-
 void xdg_wm_base_ping(void *data, struct xdg_wm_base *xdg_wm_base, uint32_t serial) {
     xdg_wm_base_pong(xdg_wm_base, serial);
+}
+
+void zdwl_manager_layout(void *data, struct zdwl_ipc_manager_v1 *zdwl_manager_v1, const char *name) {
+    layouts++;
+}
+
+void zdwl_manager_tag(void *data, struct zdwl_ipc_manager_v1 *zdwl_manager_v1, const char *name) {
+    char *str = list_add(tags, strdup(name));
+}
+
+void zdwl_output_active(void *data, struct zdwl_ipc_output_v1 *zdwl_ipc_output_v1, uint32_t active) {
+    struct Monitor *monitor = data;
+    bar_set_active(monitor->bar, active);
+}
+
+void zdwl_output_appid(void *data, struct zdwl_ipc_output_v1 *zdwl_ipc_output_v1, const char *appid) {
+    /* Nop */
+}
+
+void zdwl_output_floating(void *data, struct zdwl_ipc_output_v1 *zdwl_ipc_output_v1, uint32_t is_floating) {
+    struct Monitor *monitor = data;
+    bar_log(LOG_INFO, "%d", is_floating);
+    bar_set_floating(monitor->bar, is_floating);
+}
+
+void zdwl_output_frame(void *data, struct zdwl_ipc_output_v1 *zdwl_ipc_output_v1) {
+    struct Monitor *monitor = data;
+    monitor_update(monitor);
+}
+
+void zdwl_output_fullscreen(void *data, struct zdwl_ipc_output_v1 *zdwl_ipc_output_v1, uint32_t is_fullscreen) {
+    /* Nop */
+}
+
+void zdwl_output_layout(void *data, struct zdwl_ipc_output_v1 *zdwl_ipc_output_v1, uint32_t layout) {
+    struct Monitor *monitor = data;
+    monitor->layout = layout;
+}
+
+void zdwl_output_layout_symbol(void *data, struct zdwl_ipc_output_v1 *zdwl_ipc_output_v1, const char *layout) {
+    struct Monitor *monitor = data;
+    bar_set_layout(monitor->bar, layout);
+}
+
+void zdwl_output_tag(void *data, struct zdwl_ipc_output_v1 *zdwl_ipc_output_v1, uint32_t tag, uint32_t state, uint32_t clients, uint32_t focused) {
+    struct Monitor *monitor = data;
+    bar_set_tag(monitor->bar, tag, state, clients ? 1 : 0, focused);
+    monitor->tags = (state & ZDWL_IPC_OUTPUT_V1_TAG_STATE_ACTIVE) ? monitor->tags | (1 << tag) : monitor->tags & ~(1 << tag);
+}
+
+void zdwl_output_title(void *data, struct zdwl_ipc_output_v1 *zdwl_ipc_output_v1, const char *title) {
+    struct Monitor *monitor = data;
+    bar_set_title(monitor->bar, title);
+}
+
+void zdwl_output_toggle_visibility(void *data, struct zdwl_ipc_output_v1 *zdwl_ipc_output_v1) {
+    struct Monitor *monitor = data;
+    monitor->desired_visibiliy = 1-monitor->desired_visibiliy;
+    pipeline_hide(monitor->pipeline);
+    monitor_update(monitor);
 }
 
 int main(int argc, char *argv[]) {
