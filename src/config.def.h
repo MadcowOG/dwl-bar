@@ -9,6 +9,7 @@ static const int bar_top = 1;          /* Boolean value, non-zero is true. If no
 static const int status_on_active = 1; /* Display the status on active monitor only. If not then on all. */
 static const char *font = "Monospace 10";
 static const char *terminal[] = { "alacritty", NULL };
+static const char *icon_theme = "Hicolor";
 
 /*
  * Colors:
@@ -46,6 +47,13 @@ static const char *tags[] = { "1", "2", "3", "4", "5", "6", "7", "8", "9" };
 static const Binding bindings[] = {
     /* Click Location,   button,        callback,     bypass,    arguments */
     { Click_Status,      BTN_MIDDLE,    spawn,        0,         {.v = terminal } },
+    { Click_Systray,     BTN_LEFT,      systray,      0,         {0} },
+    { Click_Systray,     BTN_MIDDLE,    systray,      0,         {0} },
+    { Click_Systray,     BTN_RIGHT,     systray,      0,         {0} },
+    { Click_Systray,     Scroll_Up,     systray,      0,         {0} },
+    { Click_Systray,     Scroll_Down,   systray,      0,         {0} },
+    { Click_Systray,     Scroll_Left,   systray,      0,         {0} },
+    { Click_Systray,     Scroll_Right,  systray,      0,         {0} },
 };
 
 #endif // CONFIG_H_
