@@ -1,6 +1,5 @@
 #include "bar.h"
 #include "cairo.h"
-#include "config.def.h"
 #include "config.h"
 #include "input.h"
 #include "main.h"
