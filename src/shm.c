@@ -45,9 +45,7 @@ static struct Buffer buffer_create(struct MemoryMapping *map, struct wl_shm_pool
 
 void buffer_destroy(struct Buffer *buffer) {
     if (!buffer) return;
-
     wl_buffer_destroy(buffer->buffer);
-    free(buffer);
 }
 
 struct MemoryMapping memory_mapping_create(int fd, int pool_size) {
@@ -67,9 +65,7 @@ struct MemoryMapping memory_mapping_create(int fd, int pool_size) {
 
 void memory_mapping_destroy(struct MemoryMapping *map) {
     if (!map) return;
-
     munmap(map->ptr, map->size);
-    free(map);
 }
 
 struct Shm *shm_create(int width, int height, enum wl_shm_format format) {
