@@ -35,6 +35,7 @@ static const int *schemes[3][2] = {
 
 /*
  * Tags
+ * Must not exceed 31 tags and amount must match dwl's tagcount.
  */
 static const char *tags[] = { "1", "2", "3", "4", "5", "6", "7", "8", "9" };
 
