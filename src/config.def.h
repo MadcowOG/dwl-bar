@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <linux/input-event-codes.h>
 
+static const int show_bar = 1;
 static const int bar_top = 1;          /* Boolean value, non-zero is true. If not top then bottom */
 static const int status_on_active = 1; /* Display the status on active monitor only. If not then on all. */
 static const char *font = "Monospace 10";
@@ -45,7 +46,12 @@ static const char *tags[] = { "1", "2", "3", "4", "5", "6", "7", "8", "9" };
  */
 static const Binding bindings[] = {
     /* Click Location,   button,        callback,     bypass,    arguments */
+    { Click_Layout,      BTN_LEFT,      layout,       1,         {.ui = 0} },
+    { Click_Layout,      BTN_RIGHT,     layout,       1,         {.ui = 1} },
     { Click_Status,      BTN_MIDDLE,    spawn,        0,         {.v = terminal } },
+    { Click_Tag,         BTN_MIDDLE,    tag,          0,         {0} },
+    { Click_Tag,         BTN_RIGHT,     toggle_view,  0,         {0} },
+    { Click_Tag,         BTN_LEFT,      view,         0,         {0} },
 };
 
 #endif // CONFIG_H_

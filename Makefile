@@ -19,6 +19,8 @@ FILES  = $(SRCDIR)/main.c $(SRCDIR)/main.h $(SRCDIR)/log.c $(SRCDIR)/log.h \
 		 $(SRCDIR)/bar.c $(SRCDIR)/bar.h $(SRCDIR)/config.h
 OBJS   = $(SRCDIR)/xdg-output-unstable-v1-protocol.o $(SRCDIR)/xdg-shell-protocol.o \
 		 $(SRCDIR)/wlr-layer-shell-unstable-v1-protocol.o
+OBJS  := $(filter-out $(SRCDIR)/xdg-output-unstable-v1-protocol.o,$(OBJS))
+OBJS  += $(SRCDIR)/dwl-ipc-unstable-v2-protocol.o
 
 ## Compile Flags
 CC        = gcc
@@ -42,19 +44,19 @@ $(SRCDIR)/xdg-shell-protocol.c:
 	$(WAYLAND_SCANNER) private-code \
 		$(WAYLAND_PROTOCOLS)/stable/xdg-shell/xdg-shell.xml $@
 
-$(SRCDIR)/xdg-output-unstable-v1-protocol.h:
-	$(WAYLAND_SCANNER) client-header \
-		$(WAYLAND_PROTOCOLS)/unstable/xdg-output/xdg-output-unstable-v1.xml $@
-$(SRCDIR)/xdg-output-unstable-v1-protocol.c:
-	$(WAYLAND_SCANNER) private-code \
-		$(WAYLAND_PROTOCOLS)/unstable/xdg-output/xdg-output-unstable-v1.xml $@
-
 $(SRCDIR)/wlr-layer-shell-unstable-v1-protocol.h:
 	$(WAYLAND_SCANNER) client-header \
 		protocols/wlr-layer-shell-unstable-v1.xml $@
 $(SRCDIR)/wlr-layer-shell-unstable-v1-protocol.c:
 	$(WAYLAND_SCANNER) private-code \
 		protocols/wlr-layer-shell-unstable-v1.xml $@
+
+$(SRCDIR)/dwl-ipc-unstable-v2-protocol.h:
+	$(WAYLAND_SCANNER) client-header \
+		protocols/dwl-ipc-unstable-v2.xml $@
+$(SRCDIR)/dwl-ipc-unstable-v2-protocol.c:
+	$(WAYLAND_SCANNER) private-code \
+		protocols/dwl-ipc-unstable-v2.xml $@
 
 $(SRCDIR)/config.h:
 	cp src/config.def.h $@
