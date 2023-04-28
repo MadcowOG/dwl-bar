@@ -379,6 +379,7 @@ void setup(void) {
         monitor->bar = bar_create(monitor->hotspots, monitor->pipeline);
         if (!monitor->pipeline || !monitor->bar)
             panic("Failed to create a pipline or bar for monitor: %s", monitor->xdg_name);
+        monitor_update(monitor);
     }
 
     if (fcntl(STDIN_FILENO, F_SETFL, O_NONBLOCK) < 0)
