@@ -175,6 +175,8 @@ void pointer_process_scroll(struct Pointer *pointer, unsigned int axis_index) {
     if (axis->discrete_steps) {
         for (int i = 0; i < axis->discrete_steps; i++)
             hotspots_process(pointer->focused_monitor, pointer->x, pointer->y, wl_axis_to_button(axis_index, axis->value));
+        axis->value = 0;
+        axis->discrete_steps = 0;
     } else {
         while (abs(axis->value) > SCROLL_THRESHOLD) {
             if (axis->value > 0){
