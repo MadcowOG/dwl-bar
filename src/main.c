@@ -35,6 +35,7 @@ static void fifo_setup(void);
 static void monitor_destroy(struct Monitor *monitor);
 static struct Monitor *monitor_from_name(const char *name);
 struct Monitor *monitor_from_surface(const struct wl_surface *surface);
+static void monitor_initialize(struct Monitor *monitor);
 static void monitor_update(struct Monitor *monitor);
 static void pipe_in(int fd, short mask, void *data);
 static void registry_global_add(void *data, struct wl_registry *registry, uint32_t name,
@@ -195,9 +196,9 @@ void monitor_destroy(struct Monitor *monitor) {
     if (!monitor)
         return;
 
-    wl_list_remove(&monitor->link);
     free(monitor->xdg_name);
-    wl_output_release(monitor->wl_output);
+    if (wl_output_get_version(monitor->wl_output) >= WL_OUTPUT_RELEASE_SINCE_VERSION)
+        wl_output_release(monitor->wl_output);
     list_elements_destroy(monitor->hotspots, free);
     pipeline_destroy(monitor->pipeline);
     bar_destroy(monitor->bar);
@@ -222,6 +223,17 @@ struct Monitor *monitor_from_surface(const struct wl_surface *surface) {
     }
 
     return NULL;
+}
+
+void monitor_initialize(struct Monitor *monitor) {
+    if (!monitor) return;
+
+    monitor->hotspots = list_create(1);
+    monitor->pipeline = pipeline_create();
+    monitor->bar = bar_create(monitor->hotspots, monitor->pipeline);
+    if (!monitor->pipeline || !monitor->bar)
+        panic("Failed to create a pipline or bar for monitor: %s", monitor->xdg_name);
+    monitor_update(monitor);
 }
 
 void monitor_update(struct Monitor *monitor) {
@@ -265,6 +277,9 @@ void registry_global_add(void *data, struct wl_registry *registry, uint32_t name
 
         monitor->xdg_output = zxdg_output_manager_v1_get_xdg_output(output_manager, monitor->wl_output);
         zxdg_output_v1_add_listener(monitor->xdg_output, &xdg_output_listener, monitor);
+
+        if (!running) return;
+        monitor_initialize(monitor);
     }
     else if (STRING_EQUAL(interface, wl_seat_interface.name)) {
         struct Seat *seat = ecalloc(1, sizeof(*seat));
@@ -374,12 +389,7 @@ void setup(void) {
 
     struct Monitor *monitor;
     wl_list_for_each(monitor, &monitors, link) {
-        monitor->hotspots = list_create(1);
-        monitor->pipeline = pipeline_create();
-        monitor->bar = bar_create(monitor->hotspots, monitor->pipeline);
-        if (!monitor->pipeline || !monitor->bar)
-            panic("Failed to create a pipline or bar for monitor: %s", monitor->xdg_name);
-        monitor_update(monitor);
+        monitor_initialize(monitor);
     }
 
     if (fcntl(STDIN_FILENO, F_SETFL, O_NONBLOCK) < 0)

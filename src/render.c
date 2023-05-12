@@ -134,7 +134,7 @@ void pipeline_destroy(struct Pipeline *pipeline) {
 
     list_elements_destroy(pipeline->callbacks, free);
     g_object_unref(pipeline->context);
-    g_object_unref(pipeline->font->description);
+    pango_font_description_free(pipeline->font->description);
     free(pipeline->font);
     shm_destroy(pipeline->shm);
     wl_surface_destroy(pipeline->surface);
