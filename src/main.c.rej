@@ -1,0 +1,10 @@
+--- src/main.c
++++ src/main.c
+@@ -69,6 +71,7 @@ static struct wl_list seats; // struct Seat*
+ static int self_pipe[2];
+ struct zwlr_layer_shell_v1 *shell;
+ struct wl_shm *shm;
++static struct Tray *tray;
+ static const struct zxdg_output_v1_listener xdg_output_listener = {
+     .name = xdg_output_name,
+ };

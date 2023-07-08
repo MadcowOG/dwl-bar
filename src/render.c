@@ -9,6 +9,7 @@
 #include "pango/pangocairo.h"
 #include <limits.h>
 #include <stdlib.h>
+#include <sys/inotify.h>
 #include <wayland-client-protocol.h>
 #include <cairo.h>
 
@@ -134,7 +135,7 @@ void pipeline_destroy(struct Pipeline *pipeline) {
 
     list_elements_destroy(pipeline->callbacks, free);
     g_object_unref(pipeline->context);
-    g_object_unref(pipeline->font->description);
+    pango_font_description_free(pipeline->font->description);
     free(pipeline->font);
     shm_destroy(pipeline->shm);
     wl_surface_destroy(pipeline->surface);

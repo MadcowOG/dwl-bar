@@ -1,0 +1,16 @@
+--- src/config.def.h
++++ src/config.def.h
+@@ -46,6 +47,13 @@ static const char *tags[] = { "1", "2", "3", "4", "5", "6", "7", "8", "9" };
+ static const Binding bindings[] = {
+     /* Click Location,   button,        callback,     bypass,    arguments */
+     { Click_Status,      BTN_MIDDLE,    spawn,        0,         {.v = terminal } },
++    { Click_Systray,     BTN_LEFT,      systray,      0,         {0} },
++    { Click_Systray,     BTN_MIDDLE,    systray,      0,         {0} },
++    { Click_Systray,     BTN_RIGHT,     systray,      0,         {0} },
++    { Click_Systray,     Scroll_Up,     systray,      0,         {0} },
++    { Click_Systray,     Scroll_Down,   systray,      0,         {0} },
++    { Click_Systray,     Scroll_Left,   systray,      0,         {0} },
++    { Click_Systray,     Scroll_Right,  systray,      0,         {0} },
+ };
+ 
+ #endif // CONFIG_H_

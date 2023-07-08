@@ -1,0 +1,9 @@
+--- src/user.h
++++ src/user.h
+@@ -48,5 +49,6 @@ struct Binding {
+ };
+ 
+ void spawn(struct Monitor *monitor, const union Arg *arg);
++void systray(struct Monitor *monitor, const union Arg *arg);
+ 
+ #endif // USER_H_

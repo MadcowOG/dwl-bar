@@ -1,0 +1,20 @@
+# Maintainer: Me
+pkgname=dwl-bar
+pkgver=1.0.0
+pkgrel=5
+pkgdesc="dwm-like bar for wayland"
+arch=('any')
+url="https://github.com/MadcowOG/dwl-bar"
+license=('GPL3')
+source=('dwl-bar-0.0.tar.gz')
+
+depends=( 'pango' 'wayland' 'wayland-protocols' )
+
+makedepends=('make')
+
+sha512sums=('SKIP')
+
+package() {
+    cd "$srcdir/dwl-bar-0.0"
+    sudo make clean install
+}
