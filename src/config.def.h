@@ -1,13 +1,9 @@
 #ifndef CONFIG_H_
-#define  CONFIG_H_
+#define CONFIG_H_
 
-#include "user.h"
-#include <stdlib.h>
-#include <linux/input-event-codes.h>
-
-static const int bar_top = 1;          /* Boolean value, non-zero is true. If not top then bottom */
-static const int status_on_active = 1; /* Display the status on active monitor only. If not then on all. */
-static const char *font = "Monospace 10";
+static const bool bar_top = true;          /* If not top then bottom */
+static const bool status_on_active = true; /* Display the status on active monitor only. If not then on all. */
+static const char *fonts[] = {"monospace:size=10"};
 static const char *terminal[] = { "alacritty", NULL };
 
 /*
@@ -21,16 +17,16 @@ static const char *terminal[] = { "alacritty", NULL };
  * grey1 - used in an inactive background
  * grey2 - used in inactive text
  */
-static const int cyan[4]  = { 0,   85,  119, 255 };
-static const int grey1[4] = { 34,  34,  34,  255 };
-static const int grey2[4] = { 187, 187, 187, 255 };
-static const int grey3[4] = { 238, 238, 238, 255 };
+static const pixman_color_t cyan  = { .red = 0,   .green = 85,  .blue = 119, .alpha = 255 };
+static const pixman_color_t grey1 = { .red = 34,  .green = 34,  .blue = 34,  .alpha = 255 };
+static const pixman_color_t grey2 = { .red = 187, .green = 187, .blue = 187, .alpha = 255 };
+static const pixman_color_t grey3 = { .red = 238, .green = 238, .blue = 238, .alpha = 255 };
 
-static const int *schemes[3][2] = {
+static const pixman_color_t schemes[3][2] = {
     /* Scheme Type       fg,    bg */
-    [InActive_Scheme] = {grey2, grey1},
-    [Active_Scheme]   = {grey3, cyan},
-    [Urgent_Scheme]   = {grey1, grey3},
+    [inactive_scheme] = {grey2, grey1},
+    [active_scheme]   = {grey3, cyan},
+    [urgent_scheme]   = {grey1, grey3},
 };
 
 /*
@@ -43,9 +39,9 @@ static const char *tags[] = { "1", "2", "3", "4", "5", "6", "7", "8", "9" };
  * Buttons
  * See user.h for details on relevant structures.
  */
-static const Binding bindings[] = {
-    /* Click Location,   button,        callback,     bypass,    arguments */
-    { Click_Status,      BTN_MIDDLE,    spawn,        0,         {.v = terminal } },
+static const struct binding bindings[] = {
+    /* Click Location,    button,        callback,     bypass,    arguments */
+    {  click_status,      BTN_MIDDLE,    spawn,        false,     {.v = terminal } },
 };
 
 #endif // CONFIG_H_
