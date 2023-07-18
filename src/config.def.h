@@ -17,10 +17,10 @@ static const char *terminal[] = { "alacritty", NULL };
  * grey1 - used in an inactive background
  * grey2 - used in inactive text
  */
-static const pixman_color_t cyan  = { .red = 0,   .green = 85,  .blue = 119, .alpha = 255 };
-static const pixman_color_t grey1 = { .red = 34,  .green = 34,  .blue = 34,  .alpha = 255 };
-static const pixman_color_t grey2 = { .red = 187, .green = 187, .blue = 187, .alpha = 255 };
-static const pixman_color_t grey3 = { .red = 238, .green = 238, .blue = 238, .alpha = 255 };
+static const pixman_color_t cyan  = { 0,   85,  119, 255 };
+static const pixman_color_t grey1 = { 34,  34,  34,  255 };
+static const pixman_color_t grey2 = { 187, 187, 187, 255 };
+static const pixman_color_t grey3 = { 238, 238, 238, 255 };
 
 static const pixman_color_t schemes[3][2] = {
     /* Scheme Type       fg,    bg */
