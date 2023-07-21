@@ -8,7 +8,8 @@ static const char *terminal[] = { "alacritty", NULL };
 
 /*
  * Colors:
- * Colors are in rgba format.
+ * Colors are in rgba format, numbers must be hex,
+ * so the ceiling for color is UINT16_MAX.
  * The color scheming format is the same as dwm.
  * We use an enum as a index for our scheme types.
  *
@@ -17,10 +18,10 @@ static const char *terminal[] = { "alacritty", NULL };
  * grey1 - used in an inactive background
  * grey2 - used in inactive text
  */
-static const pixman_color_t cyan  = { 0,   85,  119, 255 };
-static const pixman_color_t grey1 = { 34,  34,  34,  255 };
-static const pixman_color_t grey2 = { 187, 187, 187, 255 };
-static const pixman_color_t grey3 = { 238, 238, 238, 255 };
+static const pixman_color_t cyan  = { 0x0,    0x5555, 0x7777, 0xFFFF };
+static const pixman_color_t grey1 = { 0x2222, 0x2222, 0x2222, 0xFFFF };
+static const pixman_color_t grey2 = { 0xBBBB, 0xBBBB, 0xBBBB, 0xFFFF };
+static const pixman_color_t grey3 = { 0xEEEE, 0xEEEE, 0xEEEE, 0xFFFF };
 
 static const pixman_color_t schemes[3][2] = {
     /* Scheme Type       fg,    bg */

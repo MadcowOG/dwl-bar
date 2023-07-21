@@ -1,3 +1,4 @@
+#include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -142,6 +143,7 @@ static void seat_destroy(struct seat *seat);
 static int signal_handler(int signal_number, void *data);
 static int stdin_in(int fd, uint32_t mask, void *data);
 static void spawn(struct bar *bar, const union arg *arg);
+static void wl_buffer_release(void *data, struct wl_buffer *wl_buffer);
 static void wl_callback_frame_done(void *data, struct wl_callback *wl_callback, uint32_t callback_data);
 static void wl_output_geometry(void *data, struct wl_output *wl_output, int32_t x, int32_t y, int32_t physical_width, int32_t physical_height, int32_t subpixel, const char *make, const char *model, int32_t transform);
 static void wl_output_mode(void *data, struct wl_output *wl_output, uint32_t flags, int32_t width, int32_t height, int32_t refresh);
@@ -174,6 +176,10 @@ static const struct wl_output_listener output_listener = {
 static const struct zwlr_layer_surface_v1_listener layer_surface_listener = {
     .closed = wlr_layer_surface_close,
     .configure = wlr_layer_surface_configure,
+};
+
+static const struct wl_buffer_listener buffer_listener = {
+    .release = wl_buffer_release,
 };
 
 static const struct xdg_wm_base_listener base_listener = {
@@ -251,20 +257,13 @@ void bar_destroy(struct bar *bar) {
 void bar_draw(struct bar *bar) {
     if (!bar) return;
 
-    wlc_logln(LOG_DEBUG, "start bar_draw");
+    wlc_logln(LOG_DEBUG, "start bar_draw: %s %d", bar->output_name, bar->current_buffer);
 
     pixman_image_t *main_image = pixman_image_create_bits(PIXMAN_a8r8g8b8, bar->width, bar->height, bar->buffers[bar->current_buffer].ptr, bar->width * 4);
     pixman_image_t *foreground = pixman_image_create_bits(PIXMAN_a8r8g8b8, bar->width, bar->height, NULL, bar->width * 4);
     pixman_image_t *background = pixman_image_create_bits(PIXMAN_a8r8g8b8, bar->width, bar->height, NULL, bar->width * 4);
 
-    pixman_image_fill_boxes(PIXMAN_OP_SRC, background, &cyan, 1, &(pixman_box32_t){
-            .x1 = 0, .y1 = 0,
-            .x2 = bar->width, .y2 = bar->height,
-            });
-
-    pixman_image_composite32(PIXMAN_OP_OVER, background, NULL, main_image, 0, 0, 0, 0, 0, 0, bar->width, bar->height);
-
-    goto done;
+    wlc_logln(LOG_DEBUG, "%d x %d", bar->width, bar->height);
 
     uint32_t x = 0,
              tag, component_width;
@@ -286,8 +285,6 @@ void bar_draw(struct bar *bar) {
         viewed = bar->tagset & tag;
         has_focused = bar->client_tagset & tag;
 
-        wlc_logln(LOG_DEBUG, "%c %d %d %d %d %d", *tag_name, tag, urgent, occupied, viewed, has_focused);
-
         scheme = inactive_scheme;
         if (viewed) scheme = active_scheme;
         if (urgent) scheme = urgent_scheme;
@@ -297,11 +294,9 @@ void bar_draw(struct bar *bar) {
 
         component_width = TEXT_WIDTH(tag_name) + font->height;
 
-        wlc_logln(LOG_DEBUG, "%d", component_width);
-
         pixman_image_fill_boxes(PIXMAN_OP_SRC, background, background_color, 1, &(pixman_box32_t){
                 .x1 = x, .x2 = x + component_width,
-                .y1 = 1, .y2 = bar->height,
+                .y1 = 0, .y2 = bar->height,
                 });
 
         if (occupied) {
@@ -311,7 +306,7 @@ void bar_draw(struct bar *bar) {
                     });
 
             if (!has_focused) {
-                pixman_image_fill_boxes(PIXMAN_OP_SRC, foreground, &(pixman_color_t){0}, 1, &(pixman_box32_t){
+                pixman_image_fill_boxes(PIXMAN_OP_CLEAR, foreground, foreground_color, 1, &(pixman_box32_t){
                         .x1 = x + boxs + 1, .x2 = x + boxs + boxw - 1,
                         .y1 = boxs + 1, .y2 = boxs + boxw - 1,
                         });
@@ -322,21 +317,18 @@ void bar_draw(struct bar *bar) {
 
         x += component_width;
         wlc_logln(LOG_DEBUG, "%d", x);
-
     }
 
     pixman_image_composite32(PIXMAN_OP_OVER, background, NULL, main_image, 0, 0, 0, 0, 0, 0, bar->width, bar->height);
     pixman_image_composite32(PIXMAN_OP_OVER, foreground, NULL, main_image, 0, 0, 0, 0, 0, 0, bar->width, bar->height);
 
-done:
+    pixman_image_unref(background);
+    pixman_image_unref(foreground);
+    pixman_image_unref(main_image);
 
     wl_surface_attach(bar->wl_surface, bar->buffers[bar->current_buffer].buffer, 0, 0);
     wl_surface_damage_buffer(bar->wl_surface, 0, 0, bar->width, bar->height);
     wl_surface_commit(bar->wl_surface);
-
-    pixman_image_unref(background);
-    pixman_image_unref(foreground);
-    pixman_image_unref(main_image);
 
     // Flip buffer.
     bar->current_buffer = 1 - bar->current_buffer;
@@ -414,6 +406,7 @@ void cleanup(void) {
 
     for (int i = 0; i < WL_ARRAY_LENGTH(&event_sources, struct wl_event_source*); i++) {
         struct wl_event_source *source = WL_ARRAY_AT(&event_sources, struct wl_event_source*, i);
+        if (!source) continue;
         wl_event_source_remove(source);
     }
     wl_array_release(&event_sources);
@@ -579,6 +572,10 @@ void spawn(struct bar *bar, const union arg *arg) {
     panic("execvp failed: '%s'", prog[0]);
 }
 
+void wl_buffer_release(void *data, struct wl_buffer *wl_buffer) {
+    wl_buffer_destroy(wl_buffer);
+}
+
 void wl_callback_frame_done(void *data, struct wl_callback *wl_callback, uint32_t callback_data) {
     struct bar *bar = data;
 
@@ -669,10 +666,11 @@ void wlr_layer_surface_configure(void *data, struct zwlr_layer_surface_v1 *zwlr_
 
     if (bar->height == height && bar->width == width && bar->memory_map.ptr) return;
 
-    bar->height = height;
-    bar->width = width;
-
     wlc_logln(LOG_DEBUG, "wlr_layer_surface_configure mismatch");
+
+    bar->width = width;
+    bar->height = height;
+
     if (bar->memory_map.ptr) {
         wlc_logln(LOG_DEBUG, "wlr_layer_surface_configure destroyed memory");
         munmap(bar->memory_map.ptr, bar->memory_map.size);
