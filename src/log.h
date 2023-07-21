@@ -3,6 +3,7 @@
 
 #include <stdarg.h>
 #include <stdbool.h>
+#include <stdio.h>
 
 #define LOG_ALLOCATION_FAIL(var, block) \
     if (!var) { \
@@ -23,5 +24,7 @@ void wlc_logv(const enum wlc_log_level level, const char *fmt, va_list ap);
 void wlc_logln(const enum wlc_log_level level, const char *fmt, ...);
 bool wlc_log_create(const char *file);
 void wlc_log_destroy(void);
+
+extern FILE *log_file;
 
 #endif // LOG_H_

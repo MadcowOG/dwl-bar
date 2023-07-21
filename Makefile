@@ -12,14 +12,13 @@ MANDIR = ${PREFIX}/share/man
 SRC = src
 
 PKGS   = wayland-client wayland-server wayland-cursor fcft pixman-1
-#PKGS   = wayland-client wayland-cursor fcft pixman-1
 OBJS   = ${addprefix ${SRC}/, \
 		 xdg-shell-protocol.o wlr-layer-shell-unstable-v1-protocol.o dwl-bar.o log.o\
 		 }
 
 ## Compile Flags
 CC      = gcc
-CFLAGS += `${PKG_CONFIG} --cflags ${PKGS}` -I/usr/include/pixman-1 -Wall
+CFLAGS += `${PKG_CONFIG} --cflags ${PKGS}` -I/usr/include/pixman-1 -Wall -g
 LIBS   += `${PKG_CONFIG} --libs ${PKGS}`
 
 WAYLAND_SCANNER   = `${PKG_CONFIG} --variable=wayland_scanner wayland-scanner`

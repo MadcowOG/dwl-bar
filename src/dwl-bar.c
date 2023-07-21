@@ -27,10 +27,15 @@
 
 #define BUFFER_AMNT 2
 #define STRING_EQUAL(string1, string2) (strcmp(string1, string2) == 0)
-#define LENGTH(X) (sizeof X / sizeof X[0] )
 #define TEXT_WIDTH(text) (draw_text(NULL, NULL, 0, text, 0, 0))
-#define WL_ARRAY_LENGTH(array, type) ((array)->size/sizeof(type*))
-#define WL_ARRAY_AT(array, type, index) (*((type*)((array)->data)+index))
+#define LENGTH(X) (sizeof X / sizeof X[0])
+#define WL_ARRAY_LENGTH(array, type) ((array)->size/sizeof(type))
+#define WL_ARRAY_AT(array, type, index) (*(((type*)((array)->data))+index))
+#define WL_ARRAY_REMOVE(array, type, index) {\
+    memmove(((type*)(array)->data)+index,  ((type*)((array)->data))+index+1, \
+            sizeof(type*) * (WL_ARRAY_LENGTH(array, type) - index)); \
+    (array)->size -= sizeof(type); \
+}
 #define WL_ARRAY_ADD(array, data) { \
     typeof(data) *thing = wl_array_add(array, sizeof(typeof(data))); \
     *thing = data; \
@@ -419,6 +424,7 @@ void cleanup(void) {
     wl_compositor_destroy(compositor);
     wl_shm_destroy(shm);
     zwlr_layer_shell_v1_destroy(layer_shell);
+    xdg_wm_base_destroy(base);
     wl_registry_destroy(registry);
     wl_display_disconnect(display);
 }
@@ -716,9 +722,6 @@ int main(int argc, char **argv) {
     display = wl_display_connect(NULL);
     if (!display) panic("wl_display_connect");
 
-    static int display_fd;
-    display_fd = wl_display_get_fd(display);
-
     registry = wl_display_get_registry(display);
     if (!registry) panic("wl_display_get_registry");
 
@@ -727,7 +730,7 @@ int main(int argc, char **argv) {
     WL_ARRAY_ADD(&event_sources, wl_event_loop_add_signal(events, SIGTERM, signal_handler, NULL));
     WL_ARRAY_ADD(&event_sources, wl_event_loop_add_signal(events, SIGINT, signal_handler, NULL));
     WL_ARRAY_ADD(&event_sources, wl_event_loop_add_signal(events, SIGHUP, signal_handler, NULL));
-    WL_ARRAY_ADD(&event_sources, wl_event_loop_add_fd(events, display_fd, WL_EVENT_READABLE, display_in, NULL));
+    WL_ARRAY_ADD(&event_sources, wl_event_loop_add_fd(events, wl_display_get_fd(display), WL_EVENT_READABLE, display_in, NULL));
     WL_ARRAY_ADD(&event_sources, wl_event_loop_add_fd(events, STDIN_FILENO, WL_EVENT_READABLE, stdin_in, NULL));
 
     if (fcntl(STDIN_FILENO, F_SETFL, O_NONBLOCK) == -1) panic("STDIN_FILENO O_NONBLOCK");
@@ -783,11 +786,15 @@ int main(int argc, char **argv) {
 }
 
 void panic(const char *fmt, ...) {
-    va_list ap;
+    va_list ap, aq;
     va_start(ap, fmt);
+    va_copy(aq, ap);
     fprintf(stderr, "[dwl-bar] panic: ");
     vfprintf(stderr, fmt, ap);
+    wlc_logv(LOG_FATAL, fmt, aq);
     va_end(ap);
+    va_end(aq);
+    putc('\n', log_file);
     putc('\n', stderr);
 
     cleanup();
