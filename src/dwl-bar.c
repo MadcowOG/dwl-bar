@@ -28,6 +28,7 @@
 #include "wlr-layer-shell-unstable-v1-protocol.h"
 
 #define BUFFER_AMNT 2
+#define TOUCH_POINT_AMNT 16
 #define VALUE_OR(data, default) (data ? data : default)
 #define TITLE(title) (VALUE_OR(title, ""))
 #define STATUS(status) (VALUE_OR(status, "dwl-bar 1.0"))
@@ -62,6 +63,13 @@ enum clicked {
     click_status = 1 << 3,
 };
 
+enum scroll {
+    scroll_up,
+    scroll_down,
+    scroll_left,
+    scroll_right,
+};
+
 union arg {
     uint32_t u32;
     int32_t i32;
@@ -94,11 +102,13 @@ struct pointer {
 
 struct touch {
     struct wl_touch *wl_touch;
-    struct {
+    struct touch_point {
         int32_t id;
         struct bar *selected_bar; // Can be NULL;
-        uint32_t time, x, y;
-    } touch_points[16];
+        uint32_t time;
+        wl_fixed_t x, start_x,
+                   y, start_y;
+    } touch_points[TOUCH_POINT_AMNT];
 };
 
 struct seat {
@@ -165,11 +175,13 @@ static void *ecalloc(size_t nmemb, size_t size);
 static int fifo_in(int fd, uint32_t mask, void *data);
 static void fifo_setup(void);
 static void panic(const char *fmt, ...);
-static void process_bindings(struct bar *bar, uint32_t x, uint32_t y, uint32_t button);
+static void process_bindings(struct bar *bar, uint32_t x, uint32_t y, uint32_t button, void *value);
+static void process_touch_point(struct touch_point *point);
 static void seat_destroy(struct seat *seat);
 static int signal_handler(int signal_number, void *data);
 static int stdin_in(int fd, uint32_t mask, void *data);
 static void spawn(struct bar *bar, const union arg *arg);
+static struct touch_point *touch_find_point(struct touch *touch, int32_t id);
 static void wl_callback_frame_done(void *data, struct wl_callback *wl_callback, uint32_t callback_data);
 static void wl_output_geometry(void *data, struct wl_output *wl_output, int32_t x, int32_t y, int32_t physical_width, int32_t physical_height, int32_t subpixel, const char *make, const char *model, int32_t transform);
 static void wl_output_mode(void *data, struct wl_output *wl_output, uint32_t flags, int32_t width, int32_t height, int32_t refresh);
@@ -188,6 +200,13 @@ static void wl_pointer_axis_stop(void *data, struct wl_pointer *wl_pointer, uint
 static void wl_pointer_axis_discrete(void *data, struct wl_pointer *wl_pointer, uint32_t axis, int32_t discrete);
 static void wl_pointer_axis_value120(void *data, struct wl_pointer *wl_pointer, uint32_t axis, int32_t value120);
 static void wl_pointer_axis_relative_direction(void *data, struct wl_pointer *wl_pointer, uint32_t axis, uint32_t direction);
+static void wl_touch_down(void *data, struct wl_touch *wl_touch, uint32_t serial, uint32_t time, struct wl_surface *surface, int32_t id, wl_fixed_t x, wl_fixed_t y);
+static void wl_touch_up(void *data, struct wl_touch *wl_touch, uint32_t serial, uint32_t time, int32_t id);
+static void wl_touch_motion(void *data, struct wl_touch *wl_touch, uint32_t time, int32_t id, wl_fixed_t x, wl_fixed_t y);
+static void wl_touch_frame(void *data, struct wl_touch *wl_touch);
+static void wl_touch_cancel(void *data, struct wl_touch *wl_touch);
+static void wl_touch_shape(void *data, struct wl_touch *wl_touch, int32_t id, wl_fixed_t major, wl_fixed_t minor);
+static void wl_touch_orientation(void *data, struct wl_touch *wl_touch, int32_t id, wl_fixed_t orientation);
 static void wl_registry_global_add(void *data, struct wl_registry *wl_registry, uint32_t name, const char *interface, uint32_t version);
 static void wl_registry_global_remove(void *data, struct wl_registry *wl_registry, uint32_t name);
 static void wl_seat_capabilities(void *data, struct wl_seat *wl_seat, uint32_t capabilities);
@@ -232,7 +251,13 @@ static const struct wl_pointer_listener pointer_listener = {
 };
 
 static const struct wl_touch_listener touch_listener = {
-
+    .motion = wl_touch_motion,
+    .up = wl_touch_up,
+    .down = wl_touch_down,
+    .frame = wl_touch_frame,
+    .shape = wl_touch_shape,
+    .cancel = wl_touch_cancel,
+    .orientation = wl_touch_orientation,
 };
 
 static const struct zwlr_layer_surface_v1_listener layer_surface_listener = {
@@ -392,7 +417,7 @@ void bar_draw(struct bar *bar) {
 
         x += component_width;
     }
-    wlc_logln(LOG_DEBUG, "Drew tags");
+    wlc_logln(LOG_DEBUG, "Drew tags: %d", x);
 
     /* draw layout */
     foreground_color = &schemes[inactive_scheme][0];
@@ -402,7 +427,7 @@ void bar_draw(struct bar *bar) {
     draw_text_fg_bg(foreground, foreground_color, background, background_color, (enum fcft_subpixel)bar->subpixel, bar->layout,
             font->height / 2, bottom_padding, -1, x, 0, component_width, bar->height);
     x += component_width;
-    wlc_logln(LOG_DEBUG, "Drew layout");
+    wlc_logln(LOG_DEBUG, "Drew layout: %d", x);
 
     /* draw title */
     scheme = bar->selected ? active_scheme : inactive_scheme;
@@ -419,10 +444,24 @@ void bar_draw(struct bar *bar) {
 
     draw_text_fg_bg(foreground, foreground_color, background, background_color, (enum fcft_subpixel)bar->subpixel, title,
             font->height / 2, bottom_padding, -1, x, 0, component_width, bar->height);
+
+    if (bar->floating) {
+        pixman_image_fill_boxes(PIXMAN_OP_SRC, foreground, foreground_color, 1, &(pixman_box32_t){
+                .x1 = x + boxs, .x2 = x + boxs + boxw,
+                .y1 = boxs, .y2 = boxs + boxw,
+                });
+
+        pixman_image_fill_boxes(PIXMAN_OP_CLEAR, foreground, foreground_color, 1, &(pixman_box32_t){
+                .x1 = x + boxs + 1, .x2 = x + boxs + boxw - 1,
+                .y1 = boxs + 1, .y2 = boxs + boxw - 1,
+                });
+    }
     x += component_width;
 
+    wlc_logln(LOG_DEBUG, "drew title: %d", x);
+
     /* draw status */
-    if (status_on_active && !bar->selected) {
+    if (status_on_active && bar->selected) {
         foreground_color = &schemes[inactive_scheme][0];
         background_color = &schemes[inactive_scheme][1];
 
@@ -431,15 +470,19 @@ void bar_draw(struct bar *bar) {
         draw_text_fg_bg(foreground, foreground_color, background, background_color, (enum fcft_subpixel)bar->subpixel, status,
                 font->height / 2, bottom_padding, bar->width - x - font->height, x, 0, component_width, bar->height);
         x += component_width;
-        wlc_logln(LOG_DEBUG, "Drew status");
+        wlc_logln(LOG_DEBUG, "Drew status: %d", x);
     }
 
     pixman_image_composite32(PIXMAN_OP_OVER, background, NULL, main_image, 0, 0, 0, 0, 0, 0, bar->width, bar->height);
     pixman_image_composite32(PIXMAN_OP_OVER, foreground, NULL, main_image, 0, 0, 0, 0, 0, 0, bar->width, bar->height);
 
-    pixman_image_unref(background);
+    wlc_logln(LOG_DEBUG, "after composite");
+
     pixman_image_unref(foreground);
+    pixman_image_unref(background);
     pixman_image_unref(main_image);
+
+    wlc_logln(LOG_DEBUG, "after unref");
 
     wl_surface_attach(bar->wl_surface, bar->buffers[bar->current_buffer].buffer, 0, 0);
     wl_surface_damage_buffer(bar->wl_surface, 0, 0, bar->width, bar->height);
@@ -456,7 +499,6 @@ enum clicked bar_get_clicked(struct bar *bar, uint32_t *tag, uint32_t x) {
 
     const char *title = TITLE(bar->title),
           *status = STATUS(bar->status);
-    enum clicked clicked = click_none;
     uint32_t bar_x = 0;
 
     for (int i = 0; i < LENGTH(tags); i++) {
@@ -475,7 +517,7 @@ enum clicked bar_get_clicked(struct bar *bar, uint32_t *tag, uint32_t x) {
             bar->width - bar_x - (TEXT_WIDTH(status, bar->width - bar_x - (TEXT_WIDTH(title, -1) + font->height) - font->height) + font->height));
     if (x < bar_x) return click_title;
 
-    if (status_on_active && !bar->selected) {
+    if (status_on_active && bar->selected) {
         bar_x += TEXT_WIDTH(status, bar->width - bar_x - font->height) + font->height;
         if (x < bar_x) return click_status;
     }
@@ -801,10 +843,18 @@ void fifo_setup(void) {
     panic("fifo_setup");
 }
 
-void process_bindings(struct bar *bar, uint32_t x, uint32_t y, uint32_t button) {
+/*
+ * Is passing in void* a good idea for the possible values in this? Or could this be a potential
+ * burden in the future?
+ */
+void process_bindings(struct bar *bar, uint32_t x, uint32_t y, uint32_t button, void *value) {
     if (!bar) return;
 
+    wlc_logln(LOG_DEBUG, "process_bindings start");
+
     const struct binding *binding;
+    bool arg_modified = false;
+    union arg arg;
     enum clicked clicked;
     uint32_t tag = 0;
 
@@ -813,15 +863,69 @@ void process_bindings(struct bar *bar, uint32_t x, uint32_t y, uint32_t button) 
     if ((clicked = bar_get_clicked(bar, &tag, x)) != click_none) {/*Left blank on purpose*/}
     else {return;}
 
+    if (button == scroll_up || button == scroll_down ||
+            button == scroll_right || button == scroll_left) {
+        arg.i32 = value ? *(int32_t*)value : -1;
+        wlc_logln(LOG_DEBUG, "is scroll event: %d", arg.i32);
+        arg_modified = true;
+    }
+
     for (int i = 0; i < LENGTH(bindings); i++) {
         binding = &bindings[i];
-
         if (binding->button != button || !(binding->clicked & clicked)) continue;
 
-        binding->click(bar, &binding->arg);
+        wlc_logln(LOG_DEBUG, "found relavent binding");
+
+        binding->click(bar, (arg_modified && !binding->bypass ? &arg : &binding->arg));
 
         return;
     }
+
+    wlc_logln(LOG_DEBUG, "process_bindings end");
+}
+
+/*
+ * I don't even really know if any of this(wl_touch) works as I don't have a touch device.
+ */
+void process_touch_point(struct touch_point *point) {
+    if (!point) return;
+
+    int32_t x = wl_fixed_to_int(point->x);
+    int32_t y = wl_fixed_to_int(point->y);
+    int32_t start_x = wl_fixed_to_int(point->start_x);
+    int32_t start_y = wl_fixed_to_int(point->start_y);
+
+    /* "progress" is a measure from 0..100 representing the fraction of the
+     * output the touch gesture has travelled, positive when moving to the right
+     * and negative when moving to the left.
+     * In this case we translate progress to a scroll event. So that touch devices
+     * can in some sense mimic scrolling.
+     */
+    int32_t y_progress = ((y - start_y) / (point->selected_bar->height / point->selected_bar->scale) * 100);
+    int32_t x_progress = ((x - start_x) / (point->selected_bar->width / point->selected_bar->scale) * 100);
+    int32_t scroll_value;
+    uint32_t button;
+
+    if (abs(y_progress) > 20) {
+        scroll_value = abs(y_progress);
+        process_bindings(point->selected_bar, start_x, start_y, y_progress < 0 ? scroll_up : scroll_down , &scroll_value);
+    }
+    else if (abs(x_progress) > 20) {
+        scroll_value = abs(x_progress);
+        process_bindings(point->selected_bar, start_x, start_y, x_progress < 0 ? scroll_left : scroll_right , &scroll_value);
+    }
+
+    if (point->time < 500) {
+        button = BTN_LEFT;
+    }
+    else if (point->time < 1000) {
+        button = BTN_RIGHT;
+    }
+    else {
+        button = BTN_MIDDLE;
+    }
+
+    process_bindings(point->selected_bar, start_x, start_y, button, NULL);
 }
 
 void seat_destroy(struct seat *seat) {
@@ -912,6 +1016,19 @@ void spawn(struct bar *bar, const union arg *arg) {
     panic("execvp failed: '%s'", prog[0]);
 }
 
+struct touch_point *touch_find_point(struct touch *touch, int32_t id) {
+    if (!touch) return NULL;
+
+    for (int i = 0; i < LENGTH(touch->touch_points); i++) {
+        struct touch_point *point = &touch->touch_points[i];
+        if (id != point->id) continue;
+
+        return point;
+    }
+
+    return NULL;
+}
+
 void wl_callback_frame_done(void *data, struct wl_callback *wl_callback, uint32_t callback_data) {
     struct bar *bar = data;
 
@@ -979,7 +1096,7 @@ void wl_pointer_button(void *data, struct wl_pointer *wl_pointer, uint32_t seria
     struct pointer *pointer = data;
 
     if (state == WL_POINTER_BUTTON_STATE_PRESSED) {
-        process_bindings(pointer->selected_bar, pointer->x, pointer->y, button);
+        process_bindings(pointer->selected_bar, pointer->x, pointer->y, button, NULL);
     }
 }
 
@@ -993,13 +1110,37 @@ void wl_pointer_axis(void *data, struct wl_pointer *wl_pointer, uint32_t time, u
 void wl_pointer_frame(void *data, struct wl_pointer *wl_pointer) {
     struct pointer *pointer = data;
 
-    for (int i = 0; i < 2; i++) {
-        if (!pointer->axis[i].scroll_value) continue;
+    for (int axis = 0; axis < 2; axis++) {
+        if (!pointer->axis[axis].scroll_value) continue;
 
-        // TODO: Digest the different scroll events, by converting them to values to be sent to functions. Somehow...
+        // This could probably create conflicts and problems, should find a better way to digest this stuff.
+        // We don't really use the value but to check for direction. Although in the future we might also want to
+        // use the value itself.
+        enum scroll scroll;
+        int32_t value = wl_fixed_to_int(pointer->axis[axis].scroll_value);
+        value = pointer->axis[axis].discrete ? value / 120 : value;
+        bool negative_value =  value < 0;
 
-        pointer->axis[i].discrete = false;
-        pointer->axis[i].scroll_value = 0;
+        if (pointer->axis[axis].discrete) {
+            wlc_logln(LOG_DEBUG, "wl_pointer_frame: is discrete");
+        }
+        else {
+            wlc_logln(LOG_DEBUG, "wl_pointer_frame: is not discrete");
+        }
+
+        switch (axis) {
+            case WL_POINTER_AXIS_VERTICAL_SCROLL:
+                scroll = negative_value ? scroll_up : scroll_down;
+                break;
+            case WL_POINTER_AXIS_HORIZONTAL_SCROLL:
+                scroll = negative_value ? scroll_left : scroll_right;
+                break;
+        }
+
+        process_bindings(pointer->selected_bar, pointer->x, pointer->y, scroll, &value);
+
+        pointer->axis[axis].discrete = false;
+        pointer->axis[axis].scroll_value = 0;
     }
 }
 
@@ -1012,6 +1153,7 @@ void wl_pointer_axis_discrete(void *data, struct wl_pointer *wl_pointer, uint32_
 void wl_pointer_axis_value120(void *data, struct wl_pointer *wl_pointer, uint32_t axis, int32_t value120) {
     struct pointer *pointer = data;
     if (!pointer->axis[axis].discrete) {
+        wlc_logln(LOG_DEBUG, "wl_pointer_axis_value120: discrete overried");
         pointer->axis[axis].discrete = true;
         pointer->axis[axis].scroll_value = 0;
     }
@@ -1020,6 +1162,62 @@ void wl_pointer_axis_value120(void *data, struct wl_pointer *wl_pointer, uint32_
 
 void wl_pointer_axis_relative_direction(void *data, struct wl_pointer *wl_pointer, uint32_t axis, uint32_t direction) {/*Noop*/}
 
+void wl_touch_down(void *data, struct wl_touch *wl_touch, uint32_t serial, uint32_t time, struct wl_surface *surface, int32_t id, wl_fixed_t x, wl_fixed_t y) {
+    struct touch *touch = data;
+    struct touch_point *point;
+
+    for (int i = 0; i < LENGTH(touch->touch_points); i++) {
+        point = &touch->touch_points[i];
+        if (point->id == -1) continue;
+
+        point->id = id;
+        point->start_x = x;
+        point->start_y = y;
+        point->x = 0;
+        point->y = 0;
+        point->time = time;
+        wl_list_for_each(point->selected_bar, &bars, link) {
+            if (point->selected_bar->wl_surface == surface) break;
+        }
+        if (point->selected_bar->wl_surface != surface) point->id = -1;
+    }
+}
+
+void wl_touch_up(void *data, struct wl_touch *wl_touch, uint32_t serial, uint32_t time, int32_t id) {
+    struct touch *touch = data;
+    struct touch_point *point = touch_find_point(touch, id);
+    if (!point) return;
+
+    process_touch_point(point);
+
+    point->id = -1;
+}
+
+void wl_touch_motion(void *data, struct wl_touch *wl_touch, uint32_t time, int32_t id, wl_fixed_t x, wl_fixed_t y) {
+    struct touch *touch = data;
+    struct touch_point *point = touch_find_point(touch, id);
+    if (!point) return;
+
+    point->time = time;
+    point->x = x;
+    point->y = y;
+}
+
+void wl_touch_frame(void *data, struct wl_touch *wl_touch) {/*Noop*/}
+
+void wl_touch_cancel(void *data, struct wl_touch *wl_touch) {
+    struct touch *touch = data;
+    struct touch_point *point;
+    for (int i = 0; i < LENGTH(touch->touch_points); i++) {
+        point = &touch->touch_points[i];
+        point->id = -1;
+    }
+}
+
+void wl_touch_shape(void *data, struct wl_touch *wl_touch, int32_t id, wl_fixed_t major, wl_fixed_t minor) {/*Noop*/}
+
+void wl_touch_orientation(void *data, struct wl_touch *wl_touch, int32_t id, wl_fixed_t orientation) {/*Noop*/}
+
 void wl_registry_global_add(void *data, struct wl_registry *wl_registry, uint32_t name, const char *interface, uint32_t version) {
     if (STRING_EQUAL(wl_output_interface.name, interface)) {
         struct bar *bar = ecalloc(1, sizeof(*bar));
@@ -1027,7 +1225,6 @@ void wl_registry_global_add(void *data, struct wl_registry *wl_registry, uint32_
         bar->wl_output_name = name;
         bar->scale = 1;
         bar->tagset = 1;
-        bar->invalid = false;
         if (wl_output_add_listener(bar->wl_output, &output_listener, bar) == -1) panic("wl_output_add_listener");
         wl_list_insert(&bars, &bar->link);
 

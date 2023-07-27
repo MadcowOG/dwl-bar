@@ -2,8 +2,8 @@
 # dwl-bar
 #
 # @file
-# @version 0.0
-VERSION    = 0.0
+# @version 1.0
+VERSION    = 1.0
 PKG_CONFIG = pkg-config
 
 # paths
