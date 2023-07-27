@@ -3,7 +3,7 @@
 
 static const bool bar_top = true;          /* If not top then bottom */
 static const bool status_on_active = true; /* Display the status on active monitor only. If not then on all. */
-static const char *fonts[] = {"monospace:size=10"};
+static const char *fonts[] = {"monospace:size=13"};
 static const char *terminal[] = { "alacritty", NULL };
 
 /*
@@ -37,8 +37,8 @@ static const pixman_color_t schemes[3][2] = {
 static const char *tags[] = { "1", "2", "3", "4", "5", "6", "7", "8", "9" };
 
 /*
- * Buttons
- * See user.h for details on relevant structures.
+ * Bindings
+ * See dwl-bar.c for details on relevant structures.
  */
 static const struct binding bindings[] = {
     /* Click Location,    button,        callback,     bypass,    arguments */

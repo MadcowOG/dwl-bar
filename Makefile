@@ -18,7 +18,7 @@ OBJS   = ${addprefix ${SRC}/, \
 
 ## Compile Flags
 CC      = gcc
-CFLAGS += `${PKG_CONFIG} --cflags ${PKGS}` -I/usr/include/pixman-1 -Wall -g
+CFLAGS += `${PKG_CONFIG} --cflags ${PKGS}` -I/usr/include/pixman-1 -Wall
 LIBS   += `${PKG_CONFIG} --libs ${PKGS}`
 
 WAYLAND_SCANNER   = `${PKG_CONFIG} --variable=wayland_scanner wayland-scanner`

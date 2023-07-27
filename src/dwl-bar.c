@@ -17,8 +17,9 @@
 #include <wayland-server-core.h>
 #include <wayland-server-protocol.h>
 #include <wayland-server.h>
-#include <linux/input-event-codes.h>
+#include <wayland-cursor.h>
 #include <wayland-util.h>
+#include <linux/input-event-codes.h>
 #include <pixman-1/pixman.h>
 #include <fcft/fcft.h>
 #include "uft8.h"
@@ -27,8 +28,11 @@
 #include "wlr-layer-shell-unstable-v1-protocol.h"
 
 #define BUFFER_AMNT 2
+#define VALUE_OR(data, default) (data ? data : default)
+#define TITLE(title) (VALUE_OR(title, ""))
+#define STATUS(status) (VALUE_OR(status, "dwl-bar 1.0"))
 #define STRING_EQUAL(string1, string2) (strcmp(string1, string2) == 0)
-#define TEXT_WIDTH(text) (draw_text(NULL, NULL, 0, text, 0, 0))
+#define TEXT_WIDTH(text, max) (draw_text_fg_bg(NULL, NULL, NULL, NULL, FCFT_SUBPIXEL_NONE, text, 0, 0, max, 0, 0, 0, 0))
 #define LENGTH(X) (sizeof X / sizeof X[0])
 #define WL_ARRAY_LENGTH(array, type) ((array)->size/sizeof(type))
 #define WL_ARRAY_AT(array, type, index) (*(((type*)((array)->data))+index))
@@ -51,16 +55,16 @@ enum color_scheme {
 };
 
 enum clicked {
-    click_none = 1 << 0,
-    click_tag = 1 << 1,
-    click_layout = 1 << 2,
-    click_title = 1 << 3,
-    click_status = 1 << 4,
+    click_none = 0,
+    click_tag = 1 << 0,
+    click_layout = 1 << 1,
+    click_title = 1 << 2,
+    click_status = 1 << 3,
 };
 
 union arg {
-    uint32_t ui;
-    int32_t i;
+    uint32_t u32;
+    int32_t i32;
     const void *v;
 };
 
@@ -72,18 +76,37 @@ struct binding {
     const union arg arg;
 };
 
+struct pointer {
+    struct wl_pointer *wl_pointer;
+    struct bar *selected_bar; // Can be NULL
+
+    struct wl_surface *cursor_surface;
+    struct wl_cursor_image *cursor_image;
+    struct wl_cursor_theme *cursor_theme;
+
+    struct {
+        wl_fixed_t scroll_value;
+        bool discrete;
+    } axis[2];
+
+    uint32_t x, y;
+};
+
+struct touch {
+    struct wl_touch *wl_touch;
+    struct {
+        int32_t id;
+        struct bar *selected_bar; // Can be NULL;
+        uint32_t time, x, y;
+    } touch_points[16];
+};
 
 struct seat {
     struct wl_seat *wl_seat;
     uint32_t wl_seat_name;
 
-    struct {
-        // TODO: Fill this.
-    } pointer;
-
-    struct {
-        // TODO: Fill this.
-    } touch;
+    struct pointer *pointer;
+    struct touch *touch;
 
     struct wl_list link;
 };
@@ -106,7 +129,7 @@ struct bar {
     char *output_name,
          *layout,
          *title, /* Can be NULL */
-         *status;
+         *status; /* Can be NULL */
 
     uint32_t width, height, wl_output_name,
              tagset, occupied, urgent, client_tagset;
@@ -115,7 +138,7 @@ struct bar {
     enum wl_output_subpixel subpixel; // At the moment wl_output_subpixel and fcft_subpixel
                                       // directly map to eachother but this is risky,
                                       // because if something in either lib changes we break.
-    bool selected, // The output selected
+    bool selected, // The output is selected
          floating, // The selected client floating
          visible,
          invalid; // false if bar's state is reflected in render,
@@ -127,7 +150,9 @@ struct bar {
 static int32_t allocate_shm(size_t size);
 static void randomize_string(char *str);
 static void bar_destroy(struct bar *bar);
+static void bar_determine_visibility(struct bar *bar, bool visibility, bool toggle);
 static void bar_draw(struct bar *bar);
+static enum clicked bar_get_clicked(struct bar *bar, uint32_t *tag, uint32_t x);
 static void bar_show(struct bar *bar);
 static void bar_hide(struct bar *bar);
 static void bar_render(struct bar *bar);
@@ -135,15 +160,16 @@ static void check_global(const char *name, void *data);
 static void check_globals(void);
 static void cleanup(void);
 static int display_in(int fd, uint32_t mask, void *data);
-static uint32_t draw_text(pixman_image_t *image, const pixman_color_t *color, enum fcft_subpixel subpixel, const char *text, uint32_t x, uint32_t y);
+static uint32_t draw_text_fg_bg(pixman_image_t *foreground, const pixman_color_t *foreground_color, pixman_image_t *background, const pixman_color_t *background_color, enum fcft_subpixel subpixel, const char *text, uint32_t left_padding, uint32_t bottom_padding, int32_t max_text_length, uint32_t x, uint32_t y, uint32_t width, uint32_t height);
 static void *ecalloc(size_t nmemb, size_t size);
+static int fifo_in(int fd, uint32_t mask, void *data);
+static void fifo_setup(void);
 static void panic(const char *fmt, ...);
-static struct seat *seat_create(struct wl_seat *wl_seat, uint32_t wl_seat_name);
+static void process_bindings(struct bar *bar, uint32_t x, uint32_t y, uint32_t button);
 static void seat_destroy(struct seat *seat);
 static int signal_handler(int signal_number, void *data);
 static int stdin_in(int fd, uint32_t mask, void *data);
 static void spawn(struct bar *bar, const union arg *arg);
-static void wl_buffer_release(void *data, struct wl_buffer *wl_buffer);
 static void wl_callback_frame_done(void *data, struct wl_callback *wl_callback, uint32_t callback_data);
 static void wl_output_geometry(void *data, struct wl_output *wl_output, int32_t x, int32_t y, int32_t physical_width, int32_t physical_height, int32_t subpixel, const char *make, const char *model, int32_t transform);
 static void wl_output_mode(void *data, struct wl_output *wl_output, uint32_t flags, int32_t width, int32_t height, int32_t refresh);
@@ -151,8 +177,21 @@ static void wl_output_done(void *data, struct wl_output *wl_output);
 static void wl_output_scale(void *data, struct wl_output *wl_output, int32_t factor);
 static void wl_output_name(void *data, struct wl_output *wl_output, const char *name);
 static void wl_output_description(void *data, struct wl_output *wl_output, const char *description);
+static void wl_pointer_enter(void *data, struct wl_pointer *wl_pointer, uint32_t serial, struct wl_surface *surface, wl_fixed_t surface_x, wl_fixed_t surface_y);
+static void wl_pointer_leave(void *data, struct wl_pointer *wl_pointer, uint32_t serial, struct wl_surface *surface);
+static void wl_pointer_motion(void *data, struct wl_pointer *wl_pointer, uint32_t time, wl_fixed_t surface_x, wl_fixed_t surface_y);
+static void wl_pointer_button(void *data, struct wl_pointer *wl_pointer, uint32_t serial, uint32_t time, uint32_t button, uint32_t state);
+static void wl_pointer_axis(void *data, struct wl_pointer *wl_pointer, uint32_t time, uint32_t axis, wl_fixed_t value);
+static void wl_pointer_frame(void *data, struct wl_pointer *wl_pointer);
+static void wl_pointer_axis_source(void *data, struct wl_pointer *wl_pointer, uint32_t axis_source);
+static void wl_pointer_axis_stop(void *data, struct wl_pointer *wl_pointer, uint32_t time, uint32_t axis);
+static void wl_pointer_axis_discrete(void *data, struct wl_pointer *wl_pointer, uint32_t axis, int32_t discrete);
+static void wl_pointer_axis_value120(void *data, struct wl_pointer *wl_pointer, uint32_t axis, int32_t value120);
+static void wl_pointer_axis_relative_direction(void *data, struct wl_pointer *wl_pointer, uint32_t axis, uint32_t direction);
 static void wl_registry_global_add(void *data, struct wl_registry *wl_registry, uint32_t name, const char *interface, uint32_t version);
 static void wl_registry_global_remove(void *data, struct wl_registry *wl_registry, uint32_t name);
+static void wl_seat_capabilities(void *data, struct wl_seat *wl_seat, uint32_t capabilities);
+static void wl_seat_name(void *data, struct wl_seat *wl_seat, const char *name);
 static void wlr_layer_surface_close(void *data, struct zwlr_layer_surface_v1 *zwlr_layer_surface_v1);
 static void wlr_layer_surface_configure(void *data, struct zwlr_layer_surface_v1 *zwlr_layer_surface_v1, uint32_t serial, uint32_t width, uint32_t height);
 static void xdg_wm_base_ping(void *data, struct xdg_wm_base *xdg_wm_base, uint32_t serial);
@@ -173,13 +212,32 @@ static const struct wl_output_listener output_listener = {
     .done = wl_output_done,
 };
 
+static const struct wl_seat_listener seat_listener = {
+    .capabilities = wl_seat_capabilities,
+    .name = wl_seat_name,
+};
+
+static const struct wl_pointer_listener pointer_listener = {
+    .enter = wl_pointer_enter,
+    .leave = wl_pointer_leave,
+    .frame = wl_pointer_frame,
+    .button = wl_pointer_button,
+    .motion = wl_pointer_motion,
+    .axis = wl_pointer_axis,
+    .axis_stop = wl_pointer_axis_stop,
+    .axis_source = wl_pointer_axis_source,
+    .axis_discrete = wl_pointer_axis_discrete,
+    .axis_value120 = wl_pointer_axis_value120,
+    .axis_relative_direction = wl_pointer_axis_relative_direction,
+};
+
+static const struct wl_touch_listener touch_listener = {
+
+};
+
 static const struct zwlr_layer_surface_v1_listener layer_surface_listener = {
     .closed = wlr_layer_surface_close,
     .configure = wlr_layer_surface_configure,
-};
-
-static const struct wl_buffer_listener buffer_listener = {
-    .release = wl_buffer_release,
 };
 
 static const struct xdg_wm_base_listener base_listener = {
@@ -200,7 +258,10 @@ static struct zwlr_layer_shell_v1 *layer_shell;
 static struct fcft_font *font;
 static struct wl_list bars;
 static struct wl_list seats;
-static struct wl_array event_sources; // struct wl_event_source**
+static struct wl_array event_sources; // struct wl_event_source*
+static struct wl_event_source *fifo_source;
+static int32_t fifo_fd;
+static char *fifo_path;
 static bool running = false;
 
 int32_t allocate_shm(size_t size) {
@@ -254,6 +315,22 @@ void bar_destroy(struct bar *bar) {
     free(bar);
 }
 
+void bar_determine_visibility(struct bar *bar, bool visibility, bool toggle) {
+    if (!bar) return;
+
+    wlc_logln(LOG_DEBUG, "bar_determine_visibility start");
+
+    if (visibility || (toggle && !bar->visible)) {
+        bar_show(bar);
+    }
+    else if (!visibility || (toggle && bar->visible)) {
+        bar_hide(bar);
+    }
+
+    wlc_logln(LOG_DEBUG, "bar_determine_visibility end");
+
+}
+
 void bar_draw(struct bar *bar) {
     if (!bar) return;
 
@@ -265,19 +342,21 @@ void bar_draw(struct bar *bar) {
 
     wlc_logln(LOG_DEBUG, "%d x %d", bar->width, bar->height);
 
-    uint32_t x = 0,
+    uint32_t x = 0, bottom_padding = ((bar->height + font->descent) / 2) + (bar->height / 6),
              tag, component_width;
     uint32_t boxs = font->height / 9;
     uint32_t boxw = font->height / 6 + 1;
-    const char *tag_name;
+    const char *tag_name,
+          *title  = TITLE(bar->title),
+          *status = STATUS(bar->status);
     bool urgent, occupied, viewed, has_focused;
     enum color_scheme scheme;
     const pixman_color_t *foreground_color, *background_color;
 
+    wlc_logln(LOG_DEBUG, "%d %d", font->ascent, font->descent);
+
     /* draw tags */
     for (int i = 0; i < LENGTH(tags); i++) {
-        wlc_logln(LOG_DEBUG, "%d", x);
-
         tag_name = tags[i];
         tag = 1 << i;
         urgent = bar->urgent & tag;
@@ -292,12 +371,7 @@ void bar_draw(struct bar *bar) {
         foreground_color = &schemes[scheme][0];
         background_color = &schemes[scheme][1];
 
-        component_width = TEXT_WIDTH(tag_name) + font->height;
-
-        pixman_image_fill_boxes(PIXMAN_OP_SRC, background, background_color, 1, &(pixman_box32_t){
-                .x1 = x, .x2 = x + component_width,
-                .y1 = 0, .y2 = bar->height,
-                });
+        component_width = TEXT_WIDTH(tag_name, -1) + font->height;
 
         if (occupied) {
             pixman_image_fill_boxes(PIXMAN_OP_SRC, foreground, foreground_color, 1, &(pixman_box32_t){
@@ -313,10 +387,51 @@ void bar_draw(struct bar *bar) {
             }
         }
 
-        draw_text(foreground, foreground_color, (enum fcft_subpixel)bar->subpixel, tag_name, x + font->height/2, 1);
+        draw_text_fg_bg(foreground, foreground_color, background, background_color, (enum fcft_subpixel)bar->subpixel, tag_name,
+                font->height / 2, bottom_padding, -1, x, 0, component_width, bar->height);
 
         x += component_width;
-        wlc_logln(LOG_DEBUG, "%d", x);
+    }
+    wlc_logln(LOG_DEBUG, "Drew tags");
+
+    /* draw layout */
+    foreground_color = &schemes[inactive_scheme][0];
+    background_color = &schemes[inactive_scheme][1];
+
+    component_width = TEXT_WIDTH(bar->layout, -1) + font->height;
+    draw_text_fg_bg(foreground, foreground_color, background, background_color, (enum fcft_subpixel)bar->subpixel, bar->layout,
+            font->height / 2, bottom_padding, -1, x, 0, component_width, bar->height);
+    x += component_width;
+    wlc_logln(LOG_DEBUG, "Drew layout");
+
+    /* draw title */
+    scheme = bar->selected ? active_scheme : inactive_scheme;
+    foreground_color = &schemes[scheme][0];
+    background_color = &schemes[scheme][1];
+
+    if (status_on_active && !bar->selected) {
+        component_width = bar->width - x;
+    }
+    else {
+        component_width = TEXT_WIDTH(title, -1) + font->height;
+        component_width = bar->width - x - (TEXT_WIDTH(status, bar->width - x - component_width - font->height) + font->height);
+    }
+
+    draw_text_fg_bg(foreground, foreground_color, background, background_color, (enum fcft_subpixel)bar->subpixel, title,
+            font->height / 2, bottom_padding, -1, x, 0, component_width, bar->height);
+    x += component_width;
+
+    /* draw status */
+    if (status_on_active && !bar->selected) {
+        foreground_color = &schemes[inactive_scheme][0];
+        background_color = &schemes[inactive_scheme][1];
+
+        component_width = TEXT_WIDTH(status, bar->width - x - font->height) + font->height;
+        wlc_logln(LOG_DEBUG, "status width: %d", component_width);
+        draw_text_fg_bg(foreground, foreground_color, background, background_color, (enum fcft_subpixel)bar->subpixel, status,
+                font->height / 2, bottom_padding, bar->width - x - font->height, x, 0, component_width, bar->height);
+        x += component_width;
+        wlc_logln(LOG_DEBUG, "Drew status");
     }
 
     pixman_image_composite32(PIXMAN_OP_OVER, background, NULL, main_image, 0, 0, 0, 0, 0, 0, bar->width, bar->height);
@@ -336,18 +451,46 @@ void bar_draw(struct bar *bar) {
     wlc_logln(LOG_DEBUG, "end bar_draw");
 }
 
+enum clicked bar_get_clicked(struct bar *bar, uint32_t *tag, uint32_t x) {
+    if (!bar) return click_none;
+
+    const char *title = TITLE(bar->title),
+          *status = STATUS(bar->status);
+    enum clicked clicked = click_none;
+    uint32_t bar_x = 0;
+
+    for (int i = 0; i < LENGTH(tags); i++) {
+        bar_x += TEXT_WIDTH(tags[i], -1) + font->height;
+        if (x < bar_x) {
+            *tag = i+1;
+            return click_tag;
+        }
+    }
+
+    bar_x += TEXT_WIDTH(bar->layout, -1) + font->height;
+    if (x < bar_x) return click_layout;
+
+    bar_x += (status_on_active && !bar->selected ?
+            bar->width - bar_x :
+            bar->width - bar_x - (TEXT_WIDTH(status, bar->width - bar_x - (TEXT_WIDTH(title, -1) + font->height) - font->height) + font->height));
+    if (x < bar_x) return click_title;
+
+    if (status_on_active && !bar->selected) {
+        bar_x += TEXT_WIDTH(status, bar->width - bar_x - font->height) + font->height;
+        if (x < bar_x) return click_status;
+    }
+
+    return click_none;
+}
+
 void bar_show(struct bar *bar) {
     if (!bar || bar->visible) return;
 
-    if (!bar->wl_surface) {
-        bar->wl_surface = wl_compositor_create_surface(compositor);
-        wl_surface_set_buffer_scale(bar->wl_surface, bar->scale);
-    }
+    bar->wl_surface = wl_compositor_create_surface(compositor);
+    wl_surface_set_buffer_scale(bar->wl_surface, bar->scale);
 
-    if (!bar->layer_surface) {
-        bar->layer_surface = zwlr_layer_shell_v1_get_layer_surface(layer_shell, bar->wl_surface, bar->wl_output, ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM, "dwl-bar");
-        if (zwlr_layer_surface_v1_add_listener(bar->layer_surface, &layer_surface_listener, bar) == -1) panic("zwlr_layer_surface_v1_add_listener");
-    }
+    bar->layer_surface = zwlr_layer_shell_v1_get_layer_surface(layer_shell, bar->wl_surface, bar->wl_output, ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM, "dwl-bar");
+    if (zwlr_layer_surface_v1_add_listener(bar->layer_surface, &layer_surface_listener, bar) == -1) panic("zwlr_layer_surface_v1_add_listener");
 
     zwlr_layer_surface_v1_set_anchor(bar->layer_surface,
             (bar_top ? ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP : ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM)
@@ -358,19 +501,22 @@ void bar_show(struct bar *bar) {
     wl_surface_commit(bar->wl_surface);
     bar->visible = true;
     wlc_logln(LOG_DEBUG, "bar_show");
-
 }
 
 void bar_hide(struct bar *bar) {
     if (!bar | !bar->visible) return;
 
-    wl_surface_attach(bar->wl_surface, NULL, 0, 0);
-    wl_surface_commit(bar->wl_surface);
+    wlc_logln(LOG_DEBUG, "bar_hide start");
+
+    zwlr_layer_surface_v1_destroy(bar->layer_surface);
+    wl_surface_destroy(bar->wl_surface);
     bar->visible = false;
+
+    wlc_logln(LOG_DEBUG, "bar_hide end");
 }
 
 void bar_render(struct bar *bar) {
-    if (!bar || !bar->visible || bar->invalid) return;
+    if (!bar || !bar->visible || bar->invalid || !bar->wl_surface) return;
 
     wlc_logln(LOG_DEBUG, "bar_render start");
     struct wl_callback *frame_callback = wl_surface_frame(bar->wl_surface);
@@ -392,6 +538,10 @@ void check_globals(void) {
 }
 
 void cleanup(void) {
+    close(fifo_fd);
+    unlink(fifo_path);
+    free(fifo_path);
+
     struct bar *bar, *bar_tmp;
     wl_list_for_each_safe(bar, bar_tmp, &bars, link) {
         wl_list_remove(&bar->link);
@@ -428,59 +578,250 @@ int display_in(int fd, uint32_t mask, void *data) {
     return 0;
 }
 
+
 /*
+ * I don't know how I feel about this function.
+ * It was either wrap a function that just draws text,
+ * or create a function that draws background and text.
+ * The latter feels too coupled in a sense. But the former feels wrong for some reason,
+ * like maybe it's too much work for something simple? Or just a little annoying? I'm not sure
+ * I just didn't like it.
+ * Also the latter felt a bit better because if you don't want to render the
+ * background of the text then don't provide background and background_color.
+ * Another problem I see is that this function does too much. I don't know.
+ *
+ * \param foreground_color is just text color.
+ *
+ * \param background if not provided then we don't render to background.
+ *
+ * \param background_color if not provided then we don't render to background.
+ *
+ * \param left_padding the padding to the left of the text.
+ * x + left_padding is where the text will first be drawn.
+ *
+ * \param bottom_padding the padding to the bottom of the text.
+ * y + bottom_padding is where the text will first be drawn.
+ *
  * \return new x position based on provided x. To get text width do draw_text() - x.
  */
-uint32_t draw_text(pixman_image_t *image, const pixman_color_t *color, enum fcft_subpixel subpixel, const char *text, uint32_t x, uint32_t y) {
+uint32_t draw_text_fg_bg(pixman_image_t *foreground, const pixman_color_t *foreground_color, pixman_image_t *background, const pixman_color_t *background_color, enum fcft_subpixel subpixel, const char *text,
+        uint32_t left_padding, uint32_t bottom_padding, int32_t max_text_length, uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
     if (!text) return 0;
 
-    uint32_t new_x = x, state = UTF8_ACCEPT, codepoint, prev_codepoint = 0;
+    wlc_logln(LOG_DEBUG, "draw_text start: '%s'", text);
+
+    uint32_t tx = x + left_padding,
+             ty = y + bottom_padding,
+             state = UTF8_ACCEPT, codepoint, prev_codepoint = 0;
     int64_t kern;
     const struct fcft_glyph *glyph;
-    pixman_image_t *color_image = NULL;
-    if (color) {
-        pixman_image_create_solid_fill(color);
-    }
+    pixman_image_t *text_image = foreground_color ? pixman_image_create_solid_fill(foreground_color) : NULL;
+    bool draw_foreground = foreground && foreground_color,
+         draw_background = background && background_color;
 
     for (; *text; text++) {
-        if (utf8decode(&state, &codepoint, *text) == UTF8_REJECT) continue;
+        //wlc_logln(LOG_DEBUG, "%c", *text);
+        if (utf8decode(&state, &codepoint, *text) == UTF8_REJECT) {
+            wlc_logln(LOG_DEBUG, "utf8decode");
+            continue;
+        }
 
-        glyph = fcft_rasterize_char_utf32(font, codepoint, subpixel);
-        if (!glyph) continue;
+
+        glyph = fcft_rasterize_char_utf32(font, codepoint, FCFT_SUBPIXEL_NONE);
+        if (!glyph) {
+            wlc_logln(LOG_DEBUG, "no glyph");
+            continue;
+        }
 
         kern = 0;
-        if (prev_codepoint && !fcft_kerning(font, prev_codepoint, codepoint, &kern, NULL)) continue;
+        if (prev_codepoint) fcft_kerning(font, prev_codepoint, codepoint, &kern, NULL);
 
-        new_x += kern + glyph->advance.x;
+        if (max_text_length != -1 && tx + kern + glyph->advance.x >  x + left_padding + max_text_length) break;
 
-        if (!image || !color_image) goto done;
-
-        if (pixman_image_get_format(glyph->pix) == PIXMAN_a8r8g8b8) {
-            pixman_image_composite32(PIXMAN_OP_OVER, glyph->pix, color_image, image,
-                    0, 0, 0, 0,
-                    x + glyph->x, y + glyph->y,
-                    glyph->width, glyph->height);
+        if (draw_foreground) {
+            wlc_logln(LOG_DEBUG, "%d , %d x %d , %d", tx, glyph->x, ty, glyph->y);
+            if (pixman_image_get_format(glyph->pix) == PIXMAN_a8r8g8b8) {
+                wlc_logln(LOG_DEBUG, "PIXMAN_a8r8g8b8");
+                pixman_image_composite32(PIXMAN_OP_OVER, glyph->pix, text_image, foreground,
+                        0, 0, 0, 0,
+                        tx + glyph->x, ty - glyph->y,
+                        glyph->width, glyph->height);
+            }
+            else {
+                wlc_logln(LOG_DEBUG, "PIXMAN_other");
+                pixman_image_composite32(PIXMAN_OP_OVER, text_image, glyph->pix, foreground,
+                        0, 0, 0, 0,
+                        tx + glyph->x, ty - glyph->y,
+                        glyph->width, glyph->height);
+            }
         }
-        else {
-            pixman_image_composite32(PIXMAN_OP_OVER, color_image, glyph->pix, image,
-                    0, 0, 0, 0,
-                    x + glyph->x, y + glyph->y,
-                    glyph->width, glyph->height);
-        }
 
-done:
-        x = new_x;
+
+        tx += kern + glyph->advance.x;
+        prev_codepoint = codepoint;
     }
 
-    if (color_image) pixman_image_unref(color_image);
+    if (draw_background) {
+        pixman_image_fill_boxes(PIXMAN_OP_SRC, background, background_color, 1, &(pixman_box32_t){
+                .x1 = x, .x2 = x + width,
+                .y1 = y, .y2 = y + height,
+                });
+    }
 
-    return new_x;
+    if (text_image) pixman_image_unref(text_image);
+
+    wlc_logln(LOG_DEBUG, "draw_text end");
+
+    return tx;
 }
 
-struct seat *seat_create(struct wl_seat *wl_seat, uint32_t wl_seat_name) {
-    if (!wl_seat) return NULL;
-    // TODO: Create seat and get it into working order.
-    return NULL;
+int fifo_in(int fd, uint32_t mask, void *data) {
+    struct bar *bar = NULL;
+
+    wlc_logln(LOG_DEBUG, "fifo_in start");
+
+    if (mask & WL_EVENT_ERROR) {
+        // REVIEW: This may break things
+        wl_event_source_remove(fifo_source);
+        close(fifo_fd);
+        fifo_fd = -1;
+
+        wl_list_for_each(bar, &bars, link) {
+            bar->status = NULL;
+        }
+
+        return 0;
+    }
+
+    FILE *fifo_file = fdopen(dup(fd), "r");
+    size_t size = 0;
+    char *line = NULL, *output_name, *command, *value;
+    while (true) {
+        if (getline(&line, &size, fifo_file) == -1) break;
+        wlc_logln(LOG_DEBUG, "'%s'", line);
+
+        command = strtok(line, " ");
+        if (!command) continue;
+
+        if (STRING_EQUAL(command, "monitor")) {
+            output_name = strtok(NULL, "\n");
+            if (!output_name) continue;
+
+            wl_list_for_each(bar, &bars, link) {
+                if (STRING_EQUAL(output_name, bar->output_name)) break;
+            }
+            // Make sure we have the desired output after the loop.
+            if (!STRING_EQUAL(output_name, bar->output_name) && !STRING_EQUAL(output_name, "selected")) {
+                bar = NULL;
+                continue;
+            }
+            if (STRING_EQUAL(output_name, "selected")) {
+                wl_list_for_each(bar, &bars, link) {
+                    if (bar->selected) break;
+                }
+            }
+        }
+        else if (STRING_EQUAL(command, "visibility")) {
+            value = strtok(NULL, "\n");
+            if (!value) continue;
+
+            bool visibility = false, toggle = false;
+            if (STRING_EQUAL(value, "toggle")) {
+                toggle = true;
+            }
+            else if (STRING_EQUAL(value, "on")) {
+                visibility = true;
+            }
+            else if (STRING_EQUAL(value, "off")) {
+                visibility = false;
+            }
+            else {
+                continue;
+            }
+
+            if (!bar) {
+                wlc_logln(LOG_DEBUG, "before all");
+                wl_list_for_each(bar, &bars, link) bar_determine_visibility(bar, visibility, toggle);
+                wlc_logln(LOG_DEBUG, "after all");
+                bar = NULL;
+            }
+            else {
+                bar_determine_visibility(bar, visibility, toggle);
+            }
+        }
+        else if (STRING_EQUAL(command, "status")) {
+            value = strtok(NULL, "\n");
+            if (!value) continue;
+
+            if (!bar) {
+                wl_list_for_each(bar, &bars, link) {
+                    free(bar->status);
+                    bar->status = strdup(value);
+                }
+                bar = NULL;
+            }
+            else {
+                free(bar->status);
+                bar->status = strdup(value);
+            }
+        }
+    }
+    free(line);
+    fclose(fifo_file);
+
+    wl_list_for_each(bar, &bars, link) {
+        bar_render(bar);
+    }
+
+    wlc_logln(LOG_DEBUG, "fifo_in end");
+    return 0;
+}
+
+void fifo_setup(void) {
+    size_t len;
+    const char *runtime_path = getenv("XDG_RUNTIME_DIR");
+    if (!runtime_path) panic("runtime_path");
+
+    for (int i = 0; i < 100; i++) {
+        len = snprintf(NULL, 0, "%s/test-dwl-bar-%d", runtime_path, i) + 1;
+        fifo_path = ecalloc(1, len);
+        snprintf(fifo_path, len, "%s/test-dwl-bar-%d", runtime_path, i);
+
+        if (mkfifo(fifo_path, 0666) == -1) {
+            if (errno != EEXIST) panic("mkfifo");
+            free(fifo_path);
+            continue;
+        }
+
+        if ((fifo_fd = open(fifo_path, O_CLOEXEC | O_RDWR | O_NONBLOCK)) == -1) panic("fifo_fd == -1");
+
+        return;
+    }
+
+    panic("fifo_setup");
+}
+
+void process_bindings(struct bar *bar, uint32_t x, uint32_t y, uint32_t button) {
+    if (!bar) return;
+
+    const struct binding *binding;
+    enum clicked clicked;
+    uint32_t tag = 0;
+
+    // We do this because we just want to run through a set of getters for enum clicked
+    // And really only care that one of them doesn't return click_none.
+    if ((clicked = bar_get_clicked(bar, &tag, x)) != click_none) {/*Left blank on purpose*/}
+    else {return;}
+
+    for (int i = 0; i < LENGTH(bindings); i++) {
+        binding = &bindings[i];
+
+        if (binding->button != button || !(binding->clicked & clicked)) continue;
+
+        binding->click(bar, &binding->arg);
+
+        return;
+    }
 }
 
 void seat_destroy(struct seat *seat) {
@@ -515,14 +856,13 @@ int stdin_in(int fd, uint32_t mask, void *data) {
         wl_list_for_each(bar, &bars, link) {
             if (STRING_EQUAL(output_name, bar->output_name)) break;
         }
-        // If we get out of the loop and we don't have the desired output.
+        // Make sure we have the desired output after the loop.
         if (!STRING_EQUAL(output_name, bar->output_name)) continue;
 
         if (STRING_EQUAL(command, "title")) {
             value = strtok(NULL, "\n");
             free(bar->title);
             bar->title = value ? strdup(value) : NULL;
-
         }
         else if (STRING_EQUAL(command, "floating")) {
             value = strtok(NULL, "\n");
@@ -572,10 +912,6 @@ void spawn(struct bar *bar, const union arg *arg) {
     panic("execvp failed: '%s'", prog[0]);
 }
 
-void wl_buffer_release(void *data, struct wl_buffer *wl_buffer) {
-    wl_buffer_destroy(wl_buffer);
-}
-
 void wl_callback_frame_done(void *data, struct wl_callback *wl_callback, uint32_t callback_data) {
     struct bar *bar = data;
 
@@ -607,12 +943,90 @@ void wl_output_name(void *data, struct wl_output *wl_output, const char *name) {
 
 void wl_output_description(void *data, struct wl_output *wl_output, const char *description) {/*Noop*/}
 
+void wl_pointer_enter(void *data, struct wl_pointer *wl_pointer, uint32_t serial, struct wl_surface *surface, wl_fixed_t surface_x, wl_fixed_t surface_y) {
+    struct pointer *pointer = data;
+    struct bar *bar;
+    wl_list_for_each(bar, &bars, link) {
+        if (bar->wl_surface != surface) continue;
+        pointer->selected_bar = bar;
+    }
+    if (!pointer->selected_bar) panic("wl_pointer_enter: we couldn't find a bar for the given wl_surface, something is seriously fucked.");
+
+    if (!pointer->cursor_surface) {
+        pointer->cursor_theme = wl_cursor_theme_load(NULL, 24, shm);
+        pointer->cursor_image = wl_cursor_theme_get_cursor(pointer->cursor_theme, "left_ptr")->images[0];
+        pointer->cursor_surface = wl_compositor_create_surface(compositor);
+        wl_surface_attach(pointer->cursor_surface, wl_cursor_image_get_buffer(pointer->cursor_image), 0, 0);
+        wl_surface_commit(pointer->cursor_surface);
+    }
+
+    wl_pointer_set_cursor(pointer->wl_pointer, serial, pointer->cursor_surface, pointer->cursor_image->hotspot_x, pointer->cursor_image->hotspot_y);
+}
+
+void wl_pointer_leave(void *data, struct wl_pointer *wl_pointer, uint32_t serial, struct wl_surface *surface) {
+    struct pointer *pointer = data;
+    pointer->selected_bar = NULL;
+}
+
+void wl_pointer_motion(void *data, struct wl_pointer *wl_pointer, uint32_t time, wl_fixed_t surface_x, wl_fixed_t surface_y) {
+    struct pointer *pointer = data;
+
+    pointer->x = wl_fixed_to_int(surface_x);
+    pointer->y = wl_fixed_to_int(surface_y);
+}
+
+void wl_pointer_button(void *data, struct wl_pointer *wl_pointer, uint32_t serial, uint32_t time, uint32_t button, uint32_t state) {
+    struct pointer *pointer = data;
+
+    if (state == WL_POINTER_BUTTON_STATE_PRESSED) {
+        process_bindings(pointer->selected_bar, pointer->x, pointer->y, button);
+    }
+}
+
+void wl_pointer_axis(void *data, struct wl_pointer *wl_pointer, uint32_t time, uint32_t axis, wl_fixed_t value) {
+    struct pointer *pointer = data;
+    if (pointer->axis[axis].discrete) return;
+
+    pointer->axis[axis].scroll_value += value;
+}
+
+void wl_pointer_frame(void *data, struct wl_pointer *wl_pointer) {
+    struct pointer *pointer = data;
+
+    for (int i = 0; i < 2; i++) {
+        if (!pointer->axis[i].scroll_value) continue;
+
+        // TODO: Digest the different scroll events, by converting them to values to be sent to functions. Somehow...
+
+        pointer->axis[i].discrete = false;
+        pointer->axis[i].scroll_value = 0;
+    }
+}
+
+void wl_pointer_axis_source(void *data, struct wl_pointer *wl_pointer, uint32_t axis_source) {/*Noop*/}
+
+void wl_pointer_axis_stop(void *data, struct wl_pointer *wl_pointer, uint32_t time, uint32_t axis) {/*Noop*/}
+
+void wl_pointer_axis_discrete(void *data, struct wl_pointer *wl_pointer, uint32_t axis, int32_t discrete) {/*Noop*/}
+
+void wl_pointer_axis_value120(void *data, struct wl_pointer *wl_pointer, uint32_t axis, int32_t value120) {
+    struct pointer *pointer = data;
+    if (!pointer->axis[axis].discrete) {
+        pointer->axis[axis].discrete = true;
+        pointer->axis[axis].scroll_value = 0;
+    }
+    pointer->axis[axis].scroll_value += value120;
+}
+
+void wl_pointer_axis_relative_direction(void *data, struct wl_pointer *wl_pointer, uint32_t axis, uint32_t direction) {/*Noop*/}
+
 void wl_registry_global_add(void *data, struct wl_registry *wl_registry, uint32_t name, const char *interface, uint32_t version) {
     if (STRING_EQUAL(wl_output_interface.name, interface)) {
         struct bar *bar = ecalloc(1, sizeof(*bar));
         bar->wl_output = wl_registry_bind(wl_registry, name, &wl_output_interface, 4);
         bar->wl_output_name = name;
         bar->scale = 1;
+        bar->tagset = 1;
         bar->invalid = false;
         if (wl_output_add_listener(bar->wl_output, &output_listener, bar) == -1) panic("wl_output_add_listener");
         wl_list_insert(&bars, &bar->link);
@@ -634,6 +1048,15 @@ void wl_registry_global_add(void *data, struct wl_registry *wl_registry, uint32_
         base = wl_registry_bind(wl_registry, name, &xdg_wm_base_interface, 2);
         if (xdg_wm_base_add_listener(base, &base_listener, NULL) == -1) panic("xdg_wm_base_add_listener");
     }
+    else if (STRING_EQUAL(wl_seat_interface.name, interface)) {
+        struct seat *seat = ecalloc(1, sizeof(*seat));
+        seat->wl_seat = wl_registry_bind(wl_registry, name, &wl_seat_interface, 8);
+        seat->wl_seat_name = name;
+
+        if (wl_seat_add_listener(seat->wl_seat, &seat_listener, seat) == -1) panic("wl_seat_add_listener");
+
+        wl_list_insert(&seats, &seat->link);
+    }
 }
 
 void wl_registry_global_remove(void *data, struct wl_registry *wl_registry, uint32_t name) {
@@ -650,6 +1073,29 @@ void wl_registry_global_remove(void *data, struct wl_registry *wl_registry, uint
     }
 }
 
+void wl_seat_capabilities(void *data, struct wl_seat *wl_seat, uint32_t capabilities) {
+    struct seat *seat = data;
+
+    if (capabilities & WL_SEAT_CAPABILITY_TOUCH) {
+        struct touch *touch = ecalloc(1, sizeof(*touch));
+        touch->wl_touch = wl_seat_get_touch(wl_seat);
+        seat->touch = touch;
+
+        for (int i = 0; i < LENGTH(touch->touch_points); i++) {
+            touch->touch_points[i].id = -1;
+        }
+        if (wl_touch_add_listener(touch->wl_touch, &touch_listener, touch) == -1) panic("wl_touch_add_listener");
+    }
+    if (capabilities & WL_SEAT_CAPABILITY_POINTER) {
+        struct pointer *pointer = ecalloc(1, sizeof(*pointer));
+        pointer->wl_pointer = wl_seat_get_pointer(wl_seat);
+
+        if (wl_pointer_add_listener(pointer->wl_pointer, &pointer_listener, pointer) == -1) panic("wl_pointer_add_listener");
+    }
+}
+
+void wl_seat_name(void *data, struct wl_seat *wl_seat, const char *name) {/*Noop*/}
+
 void wlr_layer_surface_close(void *data, struct zwlr_layer_surface_v1 *zwlr_layer_surface_v1) {
     running = false;
 }
@@ -664,47 +1110,50 @@ void wlr_layer_surface_configure(void *data, struct zwlr_layer_surface_v1 *zwlr_
 
     wlc_logln(LOG_DEBUG, "wlr_layer_surface_configure %d x %d %d x %d", width, height, width/bar->scale, height/bar->scale);
 
-    if (bar->height == height && bar->width == width && bar->memory_map.ptr) return;
+    if (bar->height != height || bar->width != width || !bar->memory_map.ptr) {
+        wlc_logln(LOG_DEBUG, "wlr_layer_surface_configure mismatch");
 
-    wlc_logln(LOG_DEBUG, "wlr_layer_surface_configure mismatch");
+        bar->width = width;
+        bar->height = height;
 
-    bar->width = width;
-    bar->height = height;
-
-    if (bar->memory_map.ptr) {
-        wlc_logln(LOG_DEBUG, "wlr_layer_surface_configure destroyed memory");
-        munmap(bar->memory_map.ptr, bar->memory_map.size);
-        for (int i = 0; i < BUFFER_AMNT; i++) {
-            wl_buffer_destroy(bar->buffers[i].buffer);
+        if (bar->memory_map.ptr) {
+            wlc_logln(LOG_DEBUG, "wlr_layer_surface_configure destroyed memory");
+            munmap(bar->memory_map.ptr, bar->memory_map.size);
+            for (int i = 0; i < BUFFER_AMNT; i++) {
+                wl_buffer_destroy(bar->buffers[i].buffer);
+            }
         }
-    }
 
-    uint32_t offset,
-             stride = width * 4,
-             size = height * stride,
-             total = size * BUFFER_AMNT;
-    int fd = allocate_shm(total);
-    wlc_logln(LOG_DEBUG, "wlr_layer_surface_configure allocated shm");
+        uint32_t offset,
+                 stride = width * 4,
+                 size = height * stride,
+                 total = size * BUFFER_AMNT;
+        int fd = allocate_shm(total);
 
-    bar->memory_map.ptr = mmap(NULL, total, PROT_WRITE | PROT_READ, MAP_SHARED, fd, 0);
-    bar->memory_map.size = total;
-    wlc_logln(LOG_DEBUG, "wlr_layer_surface_configure allocated mmaped");
+        wlc_logln(LOG_DEBUG, "wlr_layer_surface_configure allocated shm");
 
-    if (!bar->memory_map.ptr || bar->memory_map.ptr == MAP_FAILED) {
+        bar->memory_map.ptr = mmap(NULL, total, PROT_WRITE | PROT_READ, MAP_SHARED, fd, 0);
+        bar->memory_map.size = total;
+
+        wlc_logln(LOG_DEBUG, "wlr_layer_surface_configure allocated mmaped");
+
+        if (!bar->memory_map.ptr || bar->memory_map.ptr == MAP_FAILED) {
+            close(fd);
+            panic("mmap");
+        }
+
+        struct wl_shm_pool *pool = wl_shm_create_pool(shm, fd, total);
+        for (int i = 0; i < BUFFER_AMNT; i++) {
+            offset = size*i;
+            bar->buffers[i].buffer = wl_shm_pool_create_buffer(pool, offset, bar->width, bar->height, stride, WL_SHM_FORMAT_ARGB8888);
+            bar->buffers[i].ptr = bar->memory_map.ptr + offset;
+
+            wlc_logln(LOG_DEBUG, "wlr_layer_surface_configure allocated buffer: %d %p %p", i, bar->buffers[i].buffer, bar->buffers[i].ptr);
+        }
         close(fd);
-        panic("mmap");
+        wl_shm_pool_destroy(pool);
+        wlc_logln(LOG_DEBUG, "wlr_layer_surface_configure created memory");
     }
-
-    struct wl_shm_pool *pool = wl_shm_create_pool(shm, fd, total);
-    for (int i = 0; i < BUFFER_AMNT; i++) {
-        offset = size*i;
-        bar->buffers[i].buffer = wl_shm_pool_create_buffer(pool, offset, bar->width, bar->height, stride, WL_SHM_FORMAT_ARGB8888);
-        bar->buffers[i].ptr = bar->memory_map.ptr + offset;
-        wlc_logln(LOG_DEBUG, "wlr_layer_surface_configure allocated buffer: %d %p %p", i, bar->buffers[i].buffer, bar->buffers[i].ptr);
-    }
-    close(fd);
-    wl_shm_pool_destroy(pool);
-    wlc_logln(LOG_DEBUG, "wlr_layer_surface_configure created memory");
 
     bar_draw(bar);
     wlc_logln(LOG_DEBUG, "wlr_layer_surface_configure configured");
@@ -717,19 +1166,13 @@ static void xdg_wm_base_ping(void *data, struct xdg_wm_base *xdg_wm_base, uint32
 int main(int argc, char **argv) {
     wlc_log_create("bar.log");
 
-    display = wl_display_connect(NULL);
+    display = wl_display_connect("wayland-1");
     if (!display) panic("wl_display_connect");
 
     registry = wl_display_get_registry(display);
     if (!registry) panic("wl_display_get_registry");
 
-    events = wl_event_loop_create();
-    wl_array_init(&event_sources);
-    WL_ARRAY_ADD(&event_sources, wl_event_loop_add_signal(events, SIGTERM, signal_handler, NULL));
-    WL_ARRAY_ADD(&event_sources, wl_event_loop_add_signal(events, SIGINT, signal_handler, NULL));
-    WL_ARRAY_ADD(&event_sources, wl_event_loop_add_signal(events, SIGHUP, signal_handler, NULL));
-    WL_ARRAY_ADD(&event_sources, wl_event_loop_add_fd(events, wl_display_get_fd(display), WL_EVENT_READABLE, display_in, NULL));
-    WL_ARRAY_ADD(&event_sources, wl_event_loop_add_fd(events, STDIN_FILENO, WL_EVENT_READABLE, stdin_in, NULL));
+    fifo_setup();
 
     if (fcntl(STDIN_FILENO, F_SETFL, O_NONBLOCK) == -1) panic("STDIN_FILENO O_NONBLOCK");
 
@@ -753,6 +1196,18 @@ int main(int argc, char **argv) {
     wl_list_for_each(bar, &bars, link) {
         bar_show(bar);
     }
+
+    events = wl_event_loop_create();
+    wl_array_init(&event_sources);
+
+    fifo_source = wl_event_loop_add_fd(events, fifo_fd, WL_EVENT_READABLE, fifo_in, NULL);
+
+    WL_ARRAY_ADD(&event_sources, wl_event_loop_add_signal(events, SIGTERM, signal_handler, NULL));
+    WL_ARRAY_ADD(&event_sources, wl_event_loop_add_signal(events, SIGINT, signal_handler, NULL));
+    WL_ARRAY_ADD(&event_sources, wl_event_loop_add_signal(events, SIGHUP, signal_handler, NULL));
+    WL_ARRAY_ADD(&event_sources, wl_event_loop_add_fd(events, wl_display_get_fd(display), WL_EVENT_READABLE, display_in, NULL));
+    WL_ARRAY_ADD(&event_sources, wl_event_loop_add_fd(events, STDIN_FILENO, WL_EVENT_READABLE, stdin_in, NULL));
+    WL_ARRAY_ADD(&event_sources, fifo_source);
 
     running = true;
 
