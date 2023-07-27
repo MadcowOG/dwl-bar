@@ -13,7 +13,7 @@ SRC = src
 
 PKGS   = wayland-client wayland-server wayland-cursor fcft pixman-1
 OBJS   = ${addprefix ${SRC}/, \
-		 xdg-shell-protocol.o wlr-layer-shell-unstable-v1-protocol.o dwl-bar.o log.o\
+		 xdg-shell-protocol.o wlr-layer-shell-unstable-v1-protocol.o dwl-bar.o\
 		 }
 
 ## Compile Flags
@@ -28,7 +28,6 @@ all: dwl-bar
 dwl-bar: ${OBJS}
 	${CC} $^ ${LIBS} ${CFLAGS} -o $@
 ${SRC}/dwl-bar.o: ${SRC}/config.h
-${SRC}/log.o: ${SRC}/log.h
 ${SRC}/%-protocol.o: ${SRC}/%-protocol.c ${SRC}/%-protocol.h
 	${CC} -c $< -o $@
 
@@ -48,8 +47,6 @@ ${SRC}/wlr-layer-shell-unstable-v1-protocol.c:
 
 ${SRC}/config.h:
 	cp src/config.def.h $@
-
-dev: clean ${SRC}/config.h ${OBJS}
 
 clean:
 	rm -f dwl-bar dwl-bar-${VERSION}.tar.gz src/config.h src/*.o src/*-protocol.*
