@@ -49,7 +49,7 @@ ${SRC}/config.h:
 	cp src/config.def.h $@
 
 clean:
-	rm -f dwl-bar dwl-bar-${VERSION}.tar.gz src/config.h src/*.o src/*-protocol.*
+	rm -f dwl-bar dwl-bar-${VERSION}.tar.gz src/*.o src/*-protocol.*
 
 dist: clean
 	mkdir -p dwl-bar-${VERSION}
