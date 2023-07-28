@@ -871,7 +871,26 @@ void process_touch_point(struct touch_point *point) {
 
 void seat_destroy(struct seat *seat) {
     if (!seat) return;
-    // TODO: Destroy seat.
+
+    struct pointer *pointer;
+    struct touch *touch;
+
+    if (seat->touch) {
+        touch = seat->touch;
+        wl_touch_destroy(touch->wl_touch);
+        free(touch);
+    }
+
+    if (seat->pointer) {
+        pointer = seat->pointer;
+        wl_surface_destroy(pointer->cursor_surface);
+        wl_cursor_theme_destroy(pointer->cursor_theme);
+        wl_pointer_destroy(pointer->wl_pointer);
+        free(pointer);
+    }
+
+    wl_seat_destroy(seat->wl_seat);
+    free(seat);
 }
 
 int signal_handler(int signal_number, void *data) {
