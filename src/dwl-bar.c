@@ -445,7 +445,7 @@ void bar_draw(struct bar *bar) {
     x += component_width;
 
     /* draw status */
-    if (status_on_active && bar->selected) {
+    if ((status_on_active && bar->selected) || !status_on_active) {
         foreground_color = &schemes[inactive_scheme][0];
         background_color = &schemes[inactive_scheme][1];
 
