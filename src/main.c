@@ -183,7 +183,7 @@ void fifo_setup(void) {
       continue;
     }
 
-    if ((fifo_fd = open(fifo_path, O_CLOEXEC | O_RDONLY | O_NONBLOCK)) < 0)
+    if ((fifo_fd = open(fifo_path, O_CLOEXEC | O_RDWR | O_NONBLOCK)) < 0)
         panic("open fifo");
 
     return;
@@ -524,7 +524,7 @@ void xdg_wm_base_ping(void *data, struct xdg_wm_base *xdg_wm_base, uint32_t seri
 
 int main(int argc, char *argv[]) {
     int opt;
-    while((opt = getopt(argc, argv, "l")) != -1) {
+    while((opt = getopt(argc, argv, "hlv")) != -1) {
         switch (opt) {
             case 'l':
                 if (!setup_log())
