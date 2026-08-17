@@ -4,7 +4,7 @@ dwm-like bar for dwl
 I believe dwl-bar provides a more dwm-like experience out of the box than other bars like somebar.
 
 ## Dependencies
-I'm not sure what the package names will be for your distrobution, so just make sure these are generally what you have.
+I'm not sure what the package names will be for your distribution, so just make sure these are generally what you have.
  + make
  + pango
  + cairo
@@ -15,7 +15,7 @@ I'm not sure what the package names will be for your distrobution, so just make 
 Compile with `make`, install with `make install`, uninstall `make uninstall`.
 
 ## Configuration
-Like most suckless-like software, configuration is done through `src/config.def.h` modify it to your heart's content. dwl-bar is compatible with [someblocks](https://sr.ht/~raphi/someblocks/) for status.
+Similar to most suckless-like software, configuration is done through `src/config.def.h` modify it to your heart's content. dwl-bar is compatible with [someblocks](https://sr.ht/~raphi/someblocks/) for status.
 
 If you want dwl-bar to control dwl (via mouse gestures primarily) you may want to apply the [ipc](https://github.com/MadcowOG/dwl-bar/wiki/ipc) patch. 
 **However, do note that you will also need to apply the [ipc](https://github.com/djpohly/dwl/wiki/ipc) patch for dwl.**
